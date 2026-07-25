@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}{{ note.title if note else "Note not found" }}{% endblock %}
+{% block content %}
+{% if not note %}
+<p class="text-red-600">Note not found.</p>
+{% else %}
+<div class="max-w-2xl mx-auto bg-white rounded-lg shadow p-6">
+    <div class="flex items-start justify-between">
+        <h1 class="text-2xl font-bold">{{ note.title }}</h1>
+        <span class="text-xs uppercase tracking-wide bg-slate-200 rounded px-2 py-1">{{ note.para_category }}</span>
+    </div>
+    {% if note.sub_category %}<p class="text-slate-500 text-sm mt-1">{{ note.sub_category }}</p>{% endif %}
+
+    <div class="mt-4 whitespace-pre-wrap text-slate-700">{{ note.content }}</div>
+
+    <div class="mt-4 flex flex-wrap gap-2 text-sm">
+        <span class="bg-slate-100 rounded px-2 py-1">Priority: {{ note.priority }}</span>
+        <span class="bg-slate-100 rounded px-2 py-1">Status: {{ note.status }}</span>
+        {% if note.deadline %}<span class="bg-amber-100 text-amber-800 rounded px-2 py-1">Deadline: {{ note.deadline }}</span>{% endif %}
+        <span class="bg-slate-100 rounded px-2 py-1">Source: {{ note.source }}</span>
+    </div>
+
+    {% if note.tags %}
+    <div class="mt-2 flex flex-wrap gap-1">
+        {% for tag in note.tags %}
+        <span class="text-xs bg-emerald-100 text-emerald-800 rounded px-1.5 py-0.5">{{ tag }}</span>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if note.llm_reasoning %}
+    <p class="mt-4 text-sm text-slate-500 italic">🤖 {{ note.llm_reasoning }} (confidence: {{ note.llm_confidence }})</p>
+    {% endif %}
+
+    <div class="mt-6 flex flex-wrap items-center gap-3 border-t pt-4">
+        <form hx-post="/api/notes/{{ note.id }}/move" hx-ext="json-enc" hx-swap="none"
+              hx-on::after-request="window.location.reload()" class="flex items-center gap-2">
+            <select name="para_category" class="border rounded px-2 py-1 text-sm">
+                {% for cat in categories %}
+                <option value="{{ cat }}" {% if cat == note.para_category %}selected{% endif %}>{{ cat }}</option>
+                {% endfor %}
+            </select>
+            <button type="submit" class="bg-slate-700 text-white text-sm rounded px-3 py-1">Move</button>
+        </form>
+
+        <button hx-post="/api/notes/{{ note.id }}/archive" hx-swap="none"
+                hx-on::after-request="window.location.reload()"
+                class="bg-amber-500 hover:bg-amber-400 text-white text-sm rounded px-3 py-1">Archive</button>
+
+        <button hx-post="/api/classify/{{ note.id }}" hx-swap="none"
+                hx-on::after-request="window.location.reload()"
+                class="bg-indigo-500 hover:bg-indigo-400 text-white text-sm rounded px-3 py-1">Re-classify</button>
+
+        <button hx-delete="/api/notes/{{ note.id }}" hx-confirm="Delete this note?" hx-swap="none"
+                hx-on::after-request="window.location.href='/'"
+                class="bg-red-500 hover:bg-red-400 text-white text-sm rounded px-3 py-1">Delete</button>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,20 @@
+<div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+    {% set icons = {"projects": "🔴", "areas": "📌", "resources": "📚", "archives": "📦"} %}
+    {% set titles = {"projects": "Projects", "areas": "Areas", "resources": "Resources", "archives": "Archives"} %}
+    {% for category in columns %}
+    <div class="bg-white rounded-lg shadow flex flex-col"
+         ondragover="allowDrop(event)" ondrop="dropNote(event, '{{ category }}')">
+        <div class="px-4 py-3 border-b font-semibold flex items-center justify-between bg-slate-50 rounded-t-lg">
+            <span>{{ icons[category] }} {{ titles[category] }}</span>
+            <span class="text-sm text-slate-400">({{ tree[category].count }})</span>
+        </div>
+        <div class="flex-1 p-3 space-y-3 min-h-[200px]">
+            {% for note in tree[category].notes %}
+                {% include "_note_card.html" %}
+            {% else %}
+                <p class="text-sm text-slate-400 italic">No notes</p>
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
