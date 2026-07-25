@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     # ─── Telegram ───
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_WEBHOOK_URL: str = ""
+    TELEGRAM_WEBHOOK_SECRET: str = ""
     TELEGRAM_ALLOWED_USERS: str = ""
 
     # ─── Notification ───
