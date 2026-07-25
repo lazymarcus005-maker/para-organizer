@@ -7,11 +7,14 @@ from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+from app.config import settings
 from app.database import get_db
 from app.models import PARA_CATEGORIES, NoteCreate
+from app.routes.backup import list_backup_files
 from app.routes.notes import create_note as api_create_note
 from app.routes.para import para_tree as api_para_tree
 from app.routes.search import search_notes as api_search_notes
+from app.routes.settings import get_settings_dict
 from app.routes.stats import get_stats as api_get_stats
 from app.utils import row_to_note
 
@@ -76,3 +79,14 @@ async def stats_page(request: Request, db: aiosqlite.Connection = Depends(get_db
 async def search_page(request: Request, q: str = Query(default=""), db: aiosqlite.Connection = Depends(get_db)):
     results = await api_search_notes(q=q, limit=20, db=db) if q else {"results": [], "total": 0}
     return templates.TemplateResponse(request, "search.html", {"query": q, "results": results["results"]})
+
+
+@router.get("/settings")
+async def settings_page(request: Request, db: aiosqlite.Connection = Depends(get_db)):
+    settings_values = await get_settings_dict(db)
+    backups = list_backup_files()
+    return templates.TemplateResponse(
+        request,
+        "settings.html",
+        {"settings_values": settings_values, "backups": backups, "api_key": settings.PARA_SECRET_KEY},
+    )
