@@ -3,6 +3,7 @@
 import io
 import json
 import zipfile
+from datetime import date
 
 import aiosqlite
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -16,6 +17,8 @@ from app.utils import row_to_note
 
 router = APIRouter(prefix="/api", tags=["import_export"])
 
+MAX_IMPORT_SIZE = 10 * 1024 * 1024  # 10 MB
+
 
 async def _fetch_all_notes(db: aiosqlite.Connection) -> list[dict]:
     cursor = await db.execute("SELECT * FROM notes ORDER BY para_category, created_at DESC")
@@ -25,7 +28,15 @@ async def _fetch_all_notes(db: aiosqlite.Connection) -> list[dict]:
 
 @router.post("/import", dependencies=[Depends(require_api_key)])
 async def import_notes(file: UploadFile = File(...), db: aiosqlite.Connection = Depends(get_db)):
-    raw = await file.read()
+    # Strip any parameters (e.g. "application/json; charset=utf-8") before matching
+    # so clients that annotate the charset aren't wrongly rejected.
+    media_type = (file.content_type or "").split(";", 1)[0].strip().lower()
+    if media_type not in ("application/json", "text/json", "text/plain", ""):
+        raise HTTPException(status_code=400, detail="File must be JSON")
+
+    raw = await file.read(MAX_IMPORT_SIZE + 1)
+    if len(raw) > MAX_IMPORT_SIZE:
+        raise HTTPException(status_code=413, detail="Import file too large (max 10 MB)")
     try:
         data = json.loads(raw.decode("utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError):
@@ -57,9 +68,15 @@ async def import_notes(file: UploadFile = File(...), db: aiosqlite.Connection = 
         if priority not in PRIORITIES:
             priority = "medium"
         deadline = item.get("deadline")
+        if deadline is not None:
+            try:
+                date.fromisoformat(str(deadline)[:10])
+            except ValueError:
+                deadline = None
         tags = item.get("tags", [])
         if not isinstance(tags, list):
             tags = []
+        tags = [t for t in tags if isinstance(t, str)]
         source = item.get("source", "manual")
         if not isinstance(source, str) or not source:
             source = "manual"

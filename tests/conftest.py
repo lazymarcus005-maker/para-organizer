@@ -4,8 +4,14 @@ import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
 
-from app.config import settings
+from app.config import Settings, settings
 from app.database import get_connection, init_db
+from app.routes.settings import SETTINGS_KEYS
+
+# The unmodified pydantic defaults (env/.env only, no DB-persisted overrides) —
+# used to reset settings.* between tests regardless of what a local data/para.db
+# happens to have persisted (see app.config._load_persisted_overrides).
+_DEFAULT_SETTINGS = Settings()
 
 
 @pytest_asyncio.fixture
@@ -15,6 +21,12 @@ async def test_db(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "TELEGRAM_ALLOWED_USERS", "123")
     monkeypatch.setattr(settings, "TELEGRAM_WEBHOOK_SECRET", "telegram-secret")
     monkeypatch.setattr(settings, "PARA_SECRET_KEY", "cron-secret")
+    # PUT /api/settings mutates these live (see app.routes.settings.update_settings),
+    # so a test that changes one would otherwise leak it into later tests via the
+    # shared `settings` singleton. Force each to the pydantic default via monkeypatch
+    # so it's automatically restored at teardown.
+    for key in SETTINGS_KEYS:
+        monkeypatch.setattr(settings, key, getattr(_DEFAULT_SETTINGS, key))
     await init_db()
     yield settings.PARA_DB_PATH
 

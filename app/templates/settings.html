@@ -94,7 +94,9 @@
                             <td class="px-4 py-4 text-slate-500">{{ b.date }}</td>
                             <td class="px-6 py-4">
                                 <div class="flex justify-end gap-2 whitespace-nowrap">
-                                    <a href="/api/backup/download/{{ b.filename }}" class="inline-flex h-8 items-center rounded-md border border-slate-200 bg-white px-2.5 text-xs font-medium shadow-sm hover:bg-slate-50">Download</a>
+                                    <a href="/api/backup/download/{{ b.filename }}"
+                                       onclick="downloadWithAuth(event, this.href, '{{ b.filename }}')"
+                                       class="inline-flex h-8 items-center rounded-md border border-slate-200 bg-white px-2.5 text-xs font-medium shadow-sm hover:bg-slate-50">Download</a>
                                     <button hx-post="/api/backup/restore/{{ b.filename }}" hx-swap="none"
                                             hx-confirm="Restore from this backup? Current data will be overwritten."
                                             hx-on::after-request="if(event.detail.successful){ window.location.reload() }"

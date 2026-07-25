@@ -139,6 +139,21 @@ def test_import_non_array_json(client, test_db):
     assert client.post("/api/import", files=files, headers=AUTH).status_code == 400
 
 
+def test_import_accepts_content_type_with_charset(client, test_db):
+    notes = [{"title": "Valid", "content": "ok"}]
+    files = {"file": ("notes.json", json.dumps(notes).encode("utf-8"),
+                      "application/json; charset=utf-8")}
+    resp = client.post("/api/import", files=files, headers=AUTH)
+    assert resp.status_code == 200
+    assert resp.json()["imported"] == 1
+
+
+def test_import_rejects_wrong_content_type(client, test_db):
+    notes = [{"title": "Valid", "content": "ok"}]
+    files = {"file": ("notes.png", json.dumps(notes).encode("utf-8"), "image/png")}
+    assert client.post("/api/import", files=files, headers=AUTH).status_code == 400
+
+
 # ─────────────────────────── Export download ───────────────────────────
 
 def test_export_download_json(client, test_db):

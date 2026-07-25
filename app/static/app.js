@@ -45,6 +45,27 @@ async function dropNote(event, category) {
     }
 }
 
+async function downloadWithAuth(event, url, filename) {
+    event.preventDefault();
+    const headersAttr = event.currentTarget.closest("[hx-headers]")?.getAttribute("hx-headers");
+    const headers = headersAttr ? JSON.parse(headersAttr) : {};
+    try {
+        const response = await fetch(url, { headers });
+        if (!response.ok) throw new Error("Download failed");
+        const blob = await response.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = objectUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(objectUrl);
+    } catch (error) {
+        window.alert(error.message);
+    }
+}
+
 function initializeNavigation() {
     const toggle = document.querySelector("[data-nav-toggle]");
     const menu = document.querySelector("[data-nav-menu]");

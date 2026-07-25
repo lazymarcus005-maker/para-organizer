@@ -1,5 +1,6 @@
 """/api/backup/* — create, list, restore, delete and download database backups."""
 
+import logging
 from datetime import datetime
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from app.database import get_db
 from app.routes.notes import require_api_key
 
 router = APIRouter(prefix="/api", tags=["backup"])
+logger = logging.getLogger("para.routes.backup")
 
 
 def backup_dir() -> Path:
@@ -26,16 +28,27 @@ def safe_backup_path(filename: str) -> Path:
 
 
 async def create_backup_file(db: aiosqlite.Connection) -> dict:
-    directory = backup_dir()
-    directory.mkdir(parents=True, exist_ok=True)
+    try:
+        directory = backup_dir()
+        directory.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        logger.exception("Failed to create backup directory")
+        raise HTTPException(status_code=500, detail=f"Could not create backup directory: {e}")
+
     filename = f"para_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
     dest = directory / filename
-    target = await aiosqlite.connect(str(dest))
     try:
-        await db.backup(target)
-    finally:
-        await target.close()
-    stat = dest.stat()
+        target = await aiosqlite.connect(str(dest))
+        try:
+            await db.backup(target)
+        finally:
+            await target.close()
+        stat = dest.stat()
+    except (aiosqlite.Error, OSError) as e:
+        logger.exception("Backup creation failed")
+        dest.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"Backup failed: {e}")
+
     return {
         "filename": filename,
         "size": stat.st_size,
@@ -47,27 +60,35 @@ def list_backup_files() -> list[dict]:
     directory = backup_dir()
     if not directory.exists():
         return []
-    backups = []
-    for path in sorted(directory.glob("*.db"), key=lambda p: p.stat().st_mtime, reverse=True):
-        stat = path.stat()
-        backups.append({
-            "filename": path.name,
-            "size": stat.st_size,
-            "date": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-        })
-    return backups
+    try:
+        paths = sorted(directory.glob("*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
+        return [
+            {
+                "filename": path.name,
+                "size": (stat := path.stat()).st_size,
+                "date": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            }
+            for path in paths
+        ]
+    except OSError:
+        logger.exception("Failed to list backup directory %s", directory)
+        return []
 
 
 async def restore_backup_file(filename: str, db: aiosqlite.Connection) -> dict:
     source_path = safe_backup_path(filename)
     if not source_path.exists():
         raise HTTPException(status_code=404, detail="Backup not found")
-    source = await aiosqlite.connect(str(source_path))
     try:
-        await source.backup(db)
-    finally:
-        await source.close()
-    await db.commit()
+        source = await aiosqlite.connect(str(source_path))
+        try:
+            await source.backup(db)
+        finally:
+            await source.close()
+        await db.commit()
+    except (aiosqlite.Error, OSError) as e:
+        logger.exception("Backup restore failed for %s", filename)
+        raise HTTPException(status_code=500, detail=f"Restore failed: {e}")
     return {"restored": filename}
 
 
@@ -75,7 +96,11 @@ def delete_backup_file(filename: str) -> dict:
     path = safe_backup_path(filename)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Backup not found")
-    path.unlink()
+    try:
+        path.unlink()
+    except OSError as e:
+        logger.exception("Failed to delete backup %s", filename)
+        raise HTTPException(status_code=500, detail=f"Delete failed: {e}")
     return {"deleted": filename}
 
 

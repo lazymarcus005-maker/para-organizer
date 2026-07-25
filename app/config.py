@@ -1,8 +1,21 @@
 """Application settings loaded from environment / .env file."""
 
+import sqlite3
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Settings keys that can be overridden at runtime via PUT /api/settings and are
+# persisted in the `settings` table. Kept in sync with app.routes.settings.SETTINGS_KEYS.
+_PERSISTED_SETTING_CASTS = {
+    "NOTIFY_DEADLINE_DAYS": str,
+    "NOTIFY_DIGEST_DAY": str,
+    "NOTIFY_DIGEST_TIME": str,
+    "NOTIFY_STALE_DAYS": int,
+    "AUTO_ARCHIVE_DAYS": int,
+    "RECLASSIFY_INTERVAL_HOURS": int,
+    "RECLASSIFY_CONFIDENCE_THRESHOLD": float,
+}
 
 
 class Settings(BaseSettings):
@@ -44,3 +57,37 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def _load_persisted_overrides() -> None:
+    """Apply settings previously saved via PUT /api/settings so they take effect
+    immediately on process start (including for values baked into the scheduler's
+    cron triggers at import time, e.g. RECLASSIFY_INTERVAL_HOURS).
+
+    Uses the synchronous sqlite3 module (rather than aiosqlite) because this runs
+    at import time, before an event loop exists. Best-effort: any failure (missing
+    db file, missing table on first run, corrupt value) is ignored and defaults stand.
+    """
+    db_path = Path(settings.PARA_DB_PATH)
+    if not db_path.exists():
+        return
+    try:
+        conn = sqlite3.connect(str(db_path))
+        try:
+            rows = conn.execute("SELECT key, value FROM settings").fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return
+
+    for key, value in rows:
+        cast = _PERSISTED_SETTING_CASTS.get(key)
+        if cast is None:
+            continue
+        try:
+            setattr(settings, key, cast(value))
+        except (ValueError, TypeError):
+            continue
+
+
+_load_persisted_overrides()

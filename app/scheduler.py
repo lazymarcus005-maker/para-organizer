@@ -60,7 +60,10 @@ async def reclassify_low_confidence_notes() -> int:
 
 
 async def auto_archive_completed(now: datetime | None = None) -> int:
-    cutoff = (now or datetime.now()) - timedelta(days=settings.AUTO_ARCHIVE_DAYS)
+    timestamp = now or datetime.now()
+    cutoff = timestamp - timedelta(days=settings.AUTO_ARCHIVE_DAYS)
+    timestamp_str = timestamp.isoformat(sep=" ")
+    archived = 0
     async with get_connection() as db:
         rows = await (await db.execute(
             """SELECT id, para_category FROM notes
@@ -68,18 +71,23 @@ async def auto_archive_completed(now: datetime | None = None) -> int:
             (cutoff.isoformat(sep=" "),),
         )).fetchall()
         for row in rows:
-            await db.execute(
-                """UPDATE notes SET status='archived', para_category='archives',
-                   archived_at=?, updated_at=? WHERE id=?""",
-                ((now or datetime.now()).isoformat(sep=" "), (now or datetime.now()).isoformat(sep=" "), row["id"]),
-            )
-            await db.execute(
-                """INSERT INTO history (note_id, action, old_value, new_value, reason)
-                   VALUES (?, 'archived', ?, 'archives', 'auto_archive')""",
-                (row["id"], row["para_category"]),
-            )
+            try:
+                await db.execute(
+                    """UPDATE notes SET status='archived', para_category='archives',
+                       archived_at=?, updated_at=? WHERE id=?""",
+                    (timestamp_str, timestamp_str, row["id"]),
+                )
+                await db.execute(
+                    """INSERT INTO history (note_id, action, old_value, new_value, reason)
+                       VALUES (?, 'archived', ?, 'archives', 'auto_archive')""",
+                    (row["id"], row["para_category"]),
+                )
+                archived += 1
+            except Exception:
+                logger.exception("Failed to auto-archive note %s, skipping", row["id"])
+                continue
         await db.commit()
-    return len(rows)
+    return archived
 
 
 async def check_deadlines_and_notify(today: date | None = None) -> int:
@@ -244,13 +252,34 @@ def _parse_digest_time() -> tuple[int, int]:
         return 8, 0
 
 
-_digest_hour, _digest_minute = _parse_digest_time()
+def reclassify_trigger() -> CronTrigger:
+    """Build the reclassify cron trigger, falling back to the default interval if
+    the configured value is missing/invalid (a persisted 0 or negative would make
+    ``*/N`` raise and brick startup — see app.config._load_persisted_overrides)."""
+    hours = settings.RECLASSIFY_INTERVAL_HOURS
+    if not isinstance(hours, int) or hours < 1:
+        logger.warning("Invalid RECLASSIFY_INTERVAL_HOURS=%r, defaulting to 6", hours)
+        hours = 6
+    return CronTrigger(hour=f"*/{hours}")
+
+
+def digest_trigger() -> CronTrigger:
+    """Build the weekly-digest cron trigger, falling back to 'mon' if the persisted
+    NOTIFY_DIGEST_DAY is not a valid day-of-week expression (which would otherwise
+    raise at CronTrigger construction and brick startup)."""
+    hour, minute = _parse_digest_time()
+    try:
+        return CronTrigger(day_of_week=settings.NOTIFY_DIGEST_DAY, hour=hour, minute=minute)
+    except (ValueError, TypeError):
+        logger.warning("Invalid NOTIFY_DIGEST_DAY=%r, defaulting to 'mon'", settings.NOTIFY_DIGEST_DAY)
+        return CronTrigger(day_of_week="mon", hour=hour, minute=minute)
+
 
 scheduler = AsyncIOScheduler()
 scheduler.add_listener(_log_job_error, EVENT_JOB_ERROR)
 scheduler.add_job(
     reclassify_low_confidence_notes,
-    CronTrigger(hour=f"*/{settings.RECLASSIFY_INTERVAL_HOURS}"),
+    reclassify_trigger(),
     id="reclassify", name="Reclassify low-confidence notes", replace_existing=True,
 )
 scheduler.add_job(
@@ -266,6 +295,6 @@ scheduler.add_job(
     id="stale_check", name="Check stale projects", replace_existing=True,
 )
 scheduler.add_job(
-    send_weekly_digest, CronTrigger(day_of_week=settings.NOTIFY_DIGEST_DAY, hour=_digest_hour, minute=_digest_minute),
+    send_weekly_digest, digest_trigger(),
     id="weekly_digest", name="Send weekly digest", replace_existing=True,
 )
