@@ -1,60 +1,94 @@
 {% extends "base.html" %}
-{% block title %}{{ note.title if note else "Note not found" }}{% endblock %}
+{% block title %}{{ note.title if note else "Note not found" }} · PARA Organizer{% endblock %}
 {% block content %}
 {% if not note %}
-<p class="text-red-600">Note not found.</p>
+<div class="mx-auto max-w-xl rounded-lg border border-slate-200 bg-white p-8 text-center shadow-sm">
+    <div class="mx-auto mb-4 flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-500">?</div>
+    <h1 class="text-lg font-semibold">Note not found</h1>
+    <p class="mt-1 text-sm text-slate-500">This note may have been moved or deleted.</p>
+    <a href="/" class="mt-5 inline-flex h-9 items-center rounded-lg bg-emerald-600 px-4 text-sm font-medium text-white hover:bg-emerald-700">Back to board</a>
+</div>
 {% else %}
-<div class="max-w-2xl mx-auto bg-white rounded-lg shadow p-6">
-    <div class="flex items-start justify-between">
-        <h1 class="text-2xl font-bold">{{ note.title }}</h1>
-        <span class="text-xs uppercase tracking-wide bg-slate-200 rounded px-2 py-1">{{ note.para_category }}</span>
-    </div>
-    {% if note.sub_category %}<p class="text-slate-500 text-sm mt-1">{{ note.sub_category }}</p>{% endif %}
+<div class="mx-auto max-w-4xl">
+    <a href="/" class="mb-5 inline-flex items-center gap-1 text-sm text-slate-500 transition hover:text-slate-900">
+        <span aria-hidden="true">←</span> Back to board
+    </a>
+    <article class="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+        <header class="p-6 sm:p-8">
+            <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div class="min-w-0">
+                    <span class="mb-3 inline-flex rounded-md bg-emerald-50 px-2 py-1 text-xs font-medium capitalize text-emerald-700">{{ note.para_category }}</span>
+                    <h1 class="break-words text-2xl font-semibold tracking-tight sm:text-3xl">{{ note.title }}</h1>
+                    {% if note.sub_category %}<p class="mt-2 text-sm text-slate-500">{{ note.sub_category }}</p>{% endif %}
+                </div>
+            </div>
+        </header>
 
-    <div class="mt-4 whitespace-pre-wrap text-slate-700">{{ note.content }}</div>
+        <dl class="grid grid-cols-2 border-y border-slate-200 bg-slate-50/70 sm:grid-cols-4">
+            <div class="border-b border-r border-slate-200 p-4 sm:border-b-0">
+                <dt class="text-xs font-medium uppercase tracking-wide text-slate-400">Priority</dt>
+                <dd class="mt-1 flex items-center gap-2 text-sm font-medium capitalize">
+                    <span class="h-2 w-2 rounded-full {% if note.priority == 'urgent' or note.priority == 'high' %}bg-red-500{% elif note.priority == 'medium' %}bg-amber-500{% else %}bg-emerald-500{% endif %}"></span>
+                    {{ note.priority }}
+                </dd>
+            </div>
+            <div class="border-b border-slate-200 p-4 sm:border-b-0 sm:border-r">
+                <dt class="text-xs font-medium uppercase tracking-wide text-slate-400">Status</dt>
+                <dd class="mt-1 text-sm font-medium capitalize">{{ note.status }}</dd>
+            </div>
+            <div class="border-r border-slate-200 p-4">
+                <dt class="text-xs font-medium uppercase tracking-wide text-slate-400">Deadline</dt>
+                <dd class="mt-1 text-sm font-medium">{{ note.deadline or "Not set" }}</dd>
+            </div>
+            <div class="p-4">
+                <dt class="text-xs font-medium uppercase tracking-wide text-slate-400">Source</dt>
+                <dd class="mt-1 text-sm font-medium capitalize">{{ note.source }}</dd>
+            </div>
+        </dl>
 
-    <div class="mt-4 flex flex-wrap gap-2 text-sm">
-        <span class="bg-slate-100 rounded px-2 py-1">Priority: {{ note.priority }}</span>
-        <span class="bg-slate-100 rounded px-2 py-1">Status: {{ note.status }}</span>
-        {% if note.deadline %}<span class="bg-amber-100 text-amber-800 rounded px-2 py-1">Deadline: {{ note.deadline }}</span>{% endif %}
-        <span class="bg-slate-100 rounded px-2 py-1">Source: {{ note.source }}</span>
-    </div>
-
-    {% if note.tags %}
-    <div class="mt-2 flex flex-wrap gap-1">
-        {% for tag in note.tags %}
-        <span class="text-xs bg-emerald-100 text-emerald-800 rounded px-1.5 py-0.5">{{ tag }}</span>
-        {% endfor %}
-    </div>
-    {% endif %}
-
-    {% if note.llm_reasoning %}
-    <p class="mt-4 text-sm text-slate-500 italic">🤖 {{ note.llm_reasoning }} (confidence: {{ note.llm_confidence }})</p>
-    {% endif %}
-
-    <div class="mt-6 flex flex-wrap items-center gap-3 border-t pt-4">
-        <form hx-post="/api/notes/{{ note.id }}/move" hx-ext="json-enc" hx-swap="none"
-              hx-on::after-request="window.location.reload()" class="flex items-center gap-2">
-            <select name="para_category" class="border rounded px-2 py-1 text-sm">
-                {% for cat in categories %}
-                <option value="{{ cat }}" {% if cat == note.para_category %}selected{% endif %}>{{ cat }}</option>
+        <div class="p-6 sm:p-8">
+            <div class="whitespace-pre-wrap break-words text-[15px] leading-7 text-slate-700">{{ note.content }}</div>
+            {% if note.tags %}
+            <div class="mt-8 flex flex-wrap gap-2 border-t border-slate-100 pt-5">
+                {% for tag in note.tags %}
+                <span class="rounded-md bg-slate-100 px-2.5 py-1 text-xs text-slate-600">{{ tag }}</span>
                 {% endfor %}
-            </select>
-            <button type="submit" class="bg-slate-700 text-white text-sm rounded px-3 py-1">Move</button>
-        </form>
+            </div>
+            {% endif %}
+            {% if note.llm_reasoning %}
+            <aside class="mt-6 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-600">
+                <p class="font-medium text-slate-700">Classification note</p>
+                <p class="mt-1">{{ note.llm_reasoning }}</p>
+                <p class="mt-2 text-xs text-slate-400">Confidence: {{ note.llm_confidence }}</p>
+            </aside>
+            {% endif %}
+        </div>
 
-        <button hx-post="/api/notes/{{ note.id }}/archive" hx-swap="none"
-                hx-on::after-request="window.location.reload()"
-                class="bg-amber-500 hover:bg-amber-400 text-white text-sm rounded px-3 py-1">Archive</button>
-
-        <button hx-post="/api/classify/{{ note.id }}" hx-swap="none"
-                hx-on::after-request="window.location.reload()"
-                class="bg-indigo-500 hover:bg-indigo-400 text-white text-sm rounded px-3 py-1">Re-classify</button>
-
-        <button hx-delete="/api/notes/{{ note.id }}" hx-confirm="Delete this note?" hx-swap="none"
-                hx-on::after-request="window.location.href='/'"
-                class="bg-red-500 hover:bg-red-400 text-white text-sm rounded px-3 py-1">Delete</button>
-    </div>
+        <footer class="flex flex-col gap-3 border-t border-slate-200 bg-slate-50/70 p-4 sm:flex-row sm:flex-wrap sm:items-center sm:px-6">
+            <button type="button" disabled title="Editing is not available yet"
+                    class="inline-flex h-9 cursor-not-allowed items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-400 opacity-70">Edit</button>
+            <form hx-post="/api/notes/{{ note.id }}/move" hx-ext="json-enc" hx-swap="none"
+                  hx-on::after-request="if(event.detail.successful){ window.location.reload() }"
+                  class="flex items-center gap-2">
+                <select name="para_category" aria-label="Move note to category"
+                        class="h-9 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 text-sm shadow-sm focus:border-emerald-500 focus:outline-none sm:flex-none">
+                    {% for cat in categories %}
+                    <option value="{{ cat }}" {% if cat == note.para_category %}selected{% endif %}>{{ cat|capitalize }}</option>
+                    {% endfor %}
+                </select>
+                <button type="submit" class="inline-flex h-9 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium shadow-sm transition hover:bg-slate-100">Move</button>
+            </form>
+            <button hx-post="/api/notes/{{ note.id }}/archive" hx-swap="none"
+                    hx-on::after-request="if(event.detail.successful){ window.location.reload() }"
+                    class="inline-flex h-9 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium shadow-sm transition hover:bg-slate-100">Archive</button>
+            <button hx-post="/api/classify/{{ note.id }}" hx-swap="none"
+                    hx-on::after-request="if(event.detail.successful){ window.location.reload() }"
+                    class="inline-flex h-9 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium shadow-sm transition hover:bg-slate-100">Re-classify</button>
+            <button hx-delete="/api/notes/{{ note.id }}" hx-confirm="Delete this note?" hx-swap="none"
+                    hx-on::after-request="if(event.detail.successful){ window.location.href='/' }"
+                    class="inline-flex h-9 items-center justify-center rounded-lg border border-red-200 bg-white px-3 text-sm font-medium text-red-600 shadow-sm transition hover:bg-red-50 sm:ml-auto">Delete</button>
+        </footer>
+    </article>
 </div>
 {% endif %}
 {% endblock %}

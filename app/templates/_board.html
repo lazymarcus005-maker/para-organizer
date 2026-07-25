@@ -1,20 +1,26 @@
-<div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-    {% set icons = {"projects": "🔴", "areas": "📌", "resources": "📚", "archives": "📦"} %}
+<div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
     {% set titles = {"projects": "Projects", "areas": "Areas", "resources": "Resources", "archives": "Archives"} %}
+    {% set descriptions = {"projects": "Active outcomes", "areas": "Ongoing responsibilities", "resources": "Topics and references", "archives": "Inactive items"} %}
     {% for category in columns %}
-    <div class="bg-white rounded-lg shadow flex flex-col"
-         ondragover="allowDrop(event)" ondrop="dropNote(event, '{{ category }}')">
-        <div class="px-4 py-3 border-b font-semibold flex items-center justify-between bg-slate-50 rounded-t-lg">
-            <span>{{ icons[category] }} {{ titles[category] }}</span>
-            <span class="text-sm text-slate-400">({{ tree[category].count }})</span>
-        </div>
-        <div class="flex-1 p-3 space-y-3 min-h-[200px]">
+    <section class="flex min-h-[20rem] flex-col rounded-lg border border-slate-200 bg-white shadow-sm"
+             ondragover="allowDrop(event)" ondragleave="leaveDropZone(event)"
+             ondrop="dropNote(event, '{{ category }}')">
+        <header class="flex items-center justify-between border-b border-slate-200 bg-slate-50/70 px-4 py-3">
+            <div>
+                <h2 class="text-sm font-semibold text-slate-900">{{ titles[category] }}</h2>
+                <p class="mt-0.5 text-xs text-slate-500">{{ descriptions[category] }}</p>
+            </div>
+            <span class="inline-flex min-w-6 items-center justify-center rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600">{{ tree[category].count }}</span>
+        </header>
+        <div class="flex flex-1 flex-col gap-3 p-3" data-drop-zone>
             {% for note in tree[category].notes %}
                 {% include "_note_card.html" %}
             {% else %}
-                <p class="text-sm text-slate-400 italic">No notes</p>
+                <div class="flex min-h-28 flex-1 items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50/50">
+                    <p class="text-sm text-slate-400">No notes</p>
+                </div>
             {% endfor %}
         </div>
-    </div>
+    </section>
     {% endfor %}
 </div>

@@ -1,7 +1,14 @@
 {% extends "base.html" %}
-{% block title %}PARA Board{% endblock %}
+{% block title %}Board · PARA Organizer{% endblock %}
 {% block content %}
-<h1 class="text-2xl font-bold mb-4">PARA Board</h1>
+<div class="mb-6 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+    <div>
+        <p class="mb-1 text-sm font-medium text-emerald-600">Workspace</p>
+        <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">PARA Board</h1>
+        <p class="mt-1 text-sm text-slate-500">Organize what matters, from active projects to reference material.</p>
+    </div>
+    <a href="/new" class="inline-flex h-9 items-center justify-center self-start rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium shadow-sm transition hover:bg-slate-50 sm:self-auto">+ Add note</a>
+</div>
 <div id="board" hx-get="/partials/board" hx-trigger="refresh from:body" hx-swap="innerHTML">
     {% include "_board.html" %}
 </div>
