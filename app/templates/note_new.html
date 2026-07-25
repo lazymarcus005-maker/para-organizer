@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}New Note{% endblock %}
+{% block content %}
+<div class="max-w-xl mx-auto bg-white rounded-lg shadow p-6">
+    <h1 class="text-xl font-bold mb-4">New Note</h1>
+    <form method="post" action="/new" class="space-y-4">
+        <div>
+            <label class="block text-sm font-medium mb-1">Title</label>
+            <input type="text" name="title" required class="w-full border rounded px-3 py-2">
+        </div>
+        <div>
+            <label class="block text-sm font-medium mb-1">Content</label>
+            <textarea name="content" rows="6" required class="w-full border rounded px-3 py-2"></textarea>
+        </div>
+        <button type="submit" class="bg-emerald-500 hover:bg-emerald-400 text-white rounded px-4 py-2">
+            Save &amp; Auto-classify
+        </button>
+    </form>
+</div>
+{% endblock %}

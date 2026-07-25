@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Search{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-4">Search results for "{{ query }}"</h1>
+{% if not results %}
+<p class="text-slate-500">No results found.</p>
+{% else %}
+<div class="space-y-3">
+    {% for r in results %}
+    <a href="/notes/{{ r.id }}" class="block bg-white rounded-lg shadow p-4 hover:bg-slate-50">
+        <div class="flex items-center justify-between">
+            <span class="font-semibold">{{ r.title }}</span>
+            <span class="text-xs uppercase bg-slate-200 rounded px-2 py-1">{{ r.para_category }}</span>
+        </div>
+        <p class="text-sm text-slate-600 mt-1">{{ r.snippet|safe }}</p>
+    </a>
+    {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

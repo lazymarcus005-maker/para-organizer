@@ -1,0 +1,19 @@
+<div id="note-card-{{ note.id }}" draggable="true" ondragstart="dragNote(event)" data-id="{{ note.id }}"
+     class="block bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-md p-3 cursor-move transition">
+    <a href="/notes/{{ note.id }}" class="block">
+        <div class="flex items-center gap-2 text-sm font-medium text-slate-800">
+            {% if note.priority == "urgent" %}🔴{% elif note.priority == "high" %}🔴{% elif note.priority == "medium" %}🟡{% else %}🟢{% endif %}
+            <span class="truncate">{{ note.title }}</span>
+        </div>
+        {% if note.deadline %}
+        <span class="inline-block mt-1 text-xs bg-amber-100 text-amber-800 rounded px-2 py-0.5">📅 {{ note.deadline }}</span>
+        {% endif %}
+        {% if note.tags %}
+        <div class="mt-1 flex flex-wrap gap-1">
+            {% for tag in note.tags %}
+            <span class="text-xs bg-emerald-100 text-emerald-800 rounded px-1.5 py-0.5">{{ tag }}</span>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </a>
+</div>

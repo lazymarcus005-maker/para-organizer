@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}PARA Organizer{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.12/dist/ext/json-enc.js"></script>
+    <script src="/static/app.js" defer></script>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen">
+    <nav class="bg-slate-900 text-white px-6 py-3 flex items-center gap-6 shadow">
+        <a href="/" class="font-bold text-lg tracking-tight">📂 PARA Organizer</a>
+        <a href="/" class="hover:text-emerald-300">Board</a>
+        <a href="/stats" class="hover:text-emerald-300">Stats</a>
+        <a href="/new" class="hover:text-emerald-300">+ New Note</a>
+        <form action="/search" method="get" class="ml-auto flex">
+            <input type="text" name="q" placeholder="Search notes..." value="{{ query|default('') }}"
+                   class="rounded-l px-3 py-1.5 text-slate-900 focus:outline-none w-64">
+            <button type="submit" class="bg-emerald-500 hover:bg-emerald-400 px-3 rounded-r">🔍</button>
+        </form>
+    </nav>
+    <main class="p-6">
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

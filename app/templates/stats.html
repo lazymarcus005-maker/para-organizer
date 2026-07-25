@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Stats{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-4">Statistics</h1>
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+    <div class="bg-white rounded-lg shadow p-4 text-center">
+        <div class="text-3xl font-bold">{{ stats.total_notes }}</div>
+        <div class="text-slate-500 text-sm">Total Notes</div>
+    </div>
+    <div class="bg-white rounded-lg shadow p-4 text-center">
+        <div class="text-3xl font-bold">{{ stats.upcoming_deadlines }}</div>
+        <div class="text-slate-500 text-sm">Upcoming Deadlines</div>
+    </div>
+    <div class="bg-white rounded-lg shadow p-4 text-center">
+        <div class="text-3xl font-bold">{{ stats.avg_confidence }}</div>
+        <div class="text-slate-500 text-sm">Avg LLM Confidence</div>
+    </div>
+    <div class="bg-white rounded-lg shadow p-4 text-center">
+        <div class="text-3xl font-bold">{{ stats.by_status.active|default(0) }}</div>
+        <div class="text-slate-500 text-sm">Active</div>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <div class="bg-white rounded-lg shadow p-4">
+        <h2 class="font-semibold mb-2">By Category</h2>
+        <ul class="space-y-1 text-sm">
+            {% for cat, count in stats.by_category.items() %}
+            <li class="flex justify-between border-b py-1"><span>{{ cat }}</span><span class="font-medium">{{ count }}</span></li>
+            {% endfor %}
+        </ul>
+    </div>
+    <div class="bg-white rounded-lg shadow p-4">
+        <h2 class="font-semibold mb-2">By Priority</h2>
+        <ul class="space-y-1 text-sm">
+            {% for pri, count in stats.by_priority.items() %}
+            <li class="flex justify-between border-b py-1"><span>{{ pri }}</span><span class="font-medium">{{ count }}</span></li>
+            {% endfor %}
+        </ul>
+    </div>
+</div>
+{% endblock %}
