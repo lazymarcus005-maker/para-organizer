@@ -5,6 +5,12 @@ import json
 
 def row_to_note(row) -> dict:
     d = dict(row)
-    d["tags"] = json.loads(d.get("tags") or "[]")
-    d["source_metadata"] = json.loads(d.get("source_metadata") or "{}")
+    try:
+        d["tags"] = json.loads(d.get("tags") or "[]")
+    except (json.JSONDecodeError, TypeError):
+        d["tags"] = []
+    try:
+        d["source_metadata"] = json.loads(d.get("source_metadata") or "{}")
+    except (json.JSONDecodeError, TypeError):
+        d["source_metadata"] = {}
     return d

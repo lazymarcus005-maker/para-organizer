@@ -1,5 +1,6 @@
 """Authenticated webhook for notes produced by Hermes cron jobs."""
 
+import hmac
 import json
 
 import aiosqlite
@@ -20,7 +21,8 @@ async def create_note_from_cron(
     authorization: str | None = Header(default=None),
     db: aiosqlite.Connection = Depends(get_db),
 ):
-    if authorization != f"Bearer {settings.PARA_SECRET_KEY}":
+    expected = f"Bearer {settings.PARA_SECRET_KEY}"
+    if authorization is None or not hmac.compare_digest(authorization, expected):
         raise HTTPException(status_code=401, detail="Unauthorized")
     if not payload.source.startswith("cron:"):
         raise HTTPException(status_code=422, detail="source must be cron:<job_name>")

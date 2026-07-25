@@ -89,8 +89,10 @@ async def classify_note(title: str, content: str) -> dict:
                 raw = await call_ollama(model, prompt, format="json")
                 result = _extract_json(raw)
 
-                assert result["para_category"] in PARA_CATEGORIES
-                assert 0.0 <= float(result["confidence"]) <= 1.0
+                if result["para_category"] not in PARA_CATEGORIES:
+                    raise ValueError(f"Invalid para_category: {result.get('para_category')!r}")
+                if not 0.0 <= float(result["confidence"]) <= 1.0:
+                    raise ValueError(f"Invalid confidence: {result.get('confidence')!r}")
 
                 result["llm_model"] = model
                 result.setdefault("sub_category", None)
@@ -99,7 +101,7 @@ async def classify_note(title: str, content: str) -> dict:
                 result.setdefault("tags", [])
                 result.setdefault("reasoning", "")
                 return result
-            except (json.JSONDecodeError, KeyError, AssertionError, TypeError, ValueError,
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError,
                      httpx.TimeoutException, httpx.HTTPError) as e:
                 logger.warning("LLM %s attempt %d failed: %s", model, attempt + 1, e)
                 continue

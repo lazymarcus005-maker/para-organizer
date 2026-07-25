@@ -1,5 +1,6 @@
 """/api/notes/* — note CRUD, move, archive, re-classify."""
 
+import hmac
 import json
 import logging
 
@@ -9,16 +10,19 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from app.classifier import classify_note, extract_deadline_from_text
 from app.config import settings
 from app.database import get_db
-from app.models import NoteCreate, NoteMove, NoteUpdate, PARA_CATEGORIES
+from app.models import NoteCreate, NoteMove, NoteUpdate, PARA_CATEGORIES, PRIORITIES, STATUSES
 from app.utils import row_to_note
 
 logger = logging.getLogger("para.routes.notes")
 router = APIRouter(prefix="/api", tags=["notes"])
 
+# Fields that must never be written as SQL NULL (NOT NULL columns).
+_NON_NULLABLE_UPDATE_FIELDS = {"title", "content", "para_category", "status", "priority", "tags"}
+
 
 def require_api_key(authorization: str | None = Header(default=None)) -> None:
     expected = f"Bearer {settings.PARA_SECRET_KEY}"
-    if authorization != expected:
+    if authorization is None or not hmac.compare_digest(authorization, expected):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
@@ -137,10 +141,16 @@ async def update_note(note_id: int, payload: NoteUpdate, db: aiosqlite.Connectio
     set_clauses = []
     params: list = []
     for key, value in fields.items():
+        if key in _NON_NULLABLE_UPDATE_FIELDS and value is None and key != "tags":
+            raise HTTPException(status_code=422, detail=f"{key} cannot be null")
         if key == "tags":
-            value = json.dumps(value, ensure_ascii=False)
-        if key == "para_category" and value not in PARA_CATEGORIES:
+            value = json.dumps(value or [], ensure_ascii=False)
+        elif key == "para_category" and value not in PARA_CATEGORIES:
             raise HTTPException(status_code=422, detail=f"Invalid para_category: {value}")
+        elif key == "status" and value not in STATUSES:
+            raise HTTPException(status_code=422, detail=f"Invalid status: {value}")
+        elif key == "priority" and value not in PRIORITIES:
+            raise HTTPException(status_code=422, detail=f"Invalid priority: {value}")
         set_clauses.append(f"{key} = ?")
         params.append(value)
     set_clauses.append("updated_at = CURRENT_TIMESTAMP")

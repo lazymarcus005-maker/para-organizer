@@ -45,7 +45,8 @@ async def note_detail(request: Request, note_id: int, db: aiosqlite.Connection =
     row = await cursor.fetchone()
     note = row_to_note(row) if row else None
     return templates.TemplateResponse(
-        request, "note_detail.html", {"note": note, "categories": PARA_CATEGORIES}
+        request, "note_detail.html", {"note": note, "categories": PARA_CATEGORIES},
+        status_code=200 if note else 404,
     )
 
 

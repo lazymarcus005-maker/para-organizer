@@ -397,11 +397,21 @@ async def para_add_link(from_id: int, to_id: int, link_type: str = "related") ->
 
 def main() -> None:
     """Initialize the database and run the MCP server over stdio."""
+    if "-h" in sys.argv[1:] or "--help" in sys.argv[1:]:
+        print(__doc__)
+        return
+
     para_db = os.environ.get("PARA_DB")
     if para_db:
         settings.PARA_DB_PATH = para_db
     asyncio.run(init_db())
-    mcp.run(transport="stdio")
+    try:
+        mcp.run(transport="stdio")
+    except (KeyboardInterrupt, BrokenPipeError):
+        logger.info("MCP client disconnected, shutting down")
+    except Exception:
+        logger.exception("MCP server crashed")
+        raise
 
 
 if __name__ == "__main__":

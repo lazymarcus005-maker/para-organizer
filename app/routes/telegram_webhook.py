@@ -1,5 +1,7 @@
 """Telegram webhook endpoint."""
 
+import hmac
+
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
 
 from app.config import settings
@@ -15,8 +17,11 @@ async def telegram_webhook(
     x_telegram_bot_api_secret_token: str | None = Header(default=None),
 ):
     secret = settings.TELEGRAM_WEBHOOK_SECRET
-    if secret and x_telegram_bot_api_secret_token != secret:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    if secret:
+        if x_telegram_bot_api_secret_token is None or not hmac.compare_digest(
+            x_telegram_bot_api_secret_token, secret
+        ):
+            raise HTTPException(status_code=401, detail="Unauthorized")
     background_tasks.add_task(handle_update, update)
     return {"ok": True}
 

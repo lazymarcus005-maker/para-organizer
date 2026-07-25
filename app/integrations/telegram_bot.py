@@ -281,12 +281,23 @@ async def handle_text(text: str, chat_id: int, message_id: int | None = None) ->
 
 
 async def handle_update(update: dict) -> None:
-    """Process a Telegram update received by the webhook."""
+    """Process a Telegram update received by the webhook. Never raises."""
+    try:
+        await _handle_update(update)
+    except Exception:
+        logger.exception("Failed to process Telegram update: %r", update)
+
+
+async def _handle_update(update: dict) -> None:
+    if not isinstance(update, dict):
+        logger.warning("Ignoring malformed Telegram update (not an object): %r", update)
+        return
+
     callback = update.get("callback_query")
-    if callback:
+    if callback and isinstance(callback, dict):
         user_id = callback.get("from", {}).get("id")
         chat_id = callback.get("message", {}).get("chat", {}).get("id")
-        data = callback.get("data", "")
+        data = callback.get("data") or ""
         if chat_id is None or (allowed_user_ids() and user_id not in allowed_user_ids()):
             return
         if data.startswith("list:"):
@@ -295,7 +306,7 @@ async def handle_update(update: dict) -> None:
         return
 
     message = update.get("message") or update.get("edited_message")
-    if not message or not isinstance(message.get("text"), str):
+    if not isinstance(message, dict) or not isinstance(message.get("text"), str):
         return
     chat_id = message.get("chat", {}).get("id")
     user_id = message.get("from", {}).get("id", chat_id)

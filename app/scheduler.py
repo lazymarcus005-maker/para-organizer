@@ -6,6 +6,7 @@ import json
 import logging
 from datetime import date, datetime, timedelta
 
+from apscheduler.events import EVENT_JOB_ERROR
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -27,29 +28,33 @@ async def reclassify_low_confidence_notes() -> int:
         changed = 0
         for row in rows:
             note = row_to_note(row)
-            result = await classify_note(note["title"], note["content"])
-            deadline = result.get("deadline")
-            if not deadline:
-                extracted = extract_deadline_from_text(note["content"])
-                deadline = extracted.isoformat() if extracted else None
-            await db.execute(
-                """UPDATE notes SET para_category=?, sub_category=?, priority=?, deadline=?,
-                   tags=?, llm_model=?, llm_confidence=?, llm_reasoning=?,
-                   updated_at=CURRENT_TIMESTAMP WHERE id=?""",
-                (
-                    result.get("para_category", "inbox"), result.get("sub_category"),
-                    result.get("priority", "medium"), deadline,
-                    json.dumps(result.get("tags", []), ensure_ascii=False),
-                    result.get("llm_model"), float(result.get("confidence", 0.0)),
-                    result.get("reasoning"), note["id"],
-                ),
-            )
-            await db.execute(
-                """INSERT INTO history (note_id, action, old_value, new_value, reason)
-                   VALUES (?, 'classified', ?, ?, ?)""",
-                (note["id"], note["para_category"], result.get("para_category"), result.get("reasoning")),
-            )
-            changed += 1
+            try:
+                result = await classify_note(note["title"], note["content"])
+                deadline = result.get("deadline")
+                if not deadline:
+                    extracted = extract_deadline_from_text(note["content"])
+                    deadline = extracted.isoformat() if extracted else None
+                await db.execute(
+                    """UPDATE notes SET para_category=?, sub_category=?, priority=?, deadline=?,
+                       tags=?, llm_model=?, llm_confidence=?, llm_reasoning=?,
+                       updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                    (
+                        result.get("para_category", "inbox"), result.get("sub_category"),
+                        result.get("priority", "medium"), deadline,
+                        json.dumps(result.get("tags", []), ensure_ascii=False),
+                        result.get("llm_model"), float(result.get("confidence", 0.0)),
+                        result.get("reasoning"), note["id"],
+                    ),
+                )
+                await db.execute(
+                    """INSERT INTO history (note_id, action, old_value, new_value, reason)
+                       VALUES (?, 'classified', ?, ?, ?)""",
+                    (note["id"], note["para_category"], result.get("para_category"), result.get("reasoning")),
+                )
+                changed += 1
+            except Exception:
+                logger.exception("Failed to reclassify note %s, skipping", note["id"])
+                continue
         await db.commit()
     return changed
 
@@ -90,35 +95,43 @@ async def check_deadlines_and_notify(today: date | None = None) -> int:
         sent = 0
         for row in rows:
             note = row_to_note(row)
-            days_left = (date.fromisoformat(str(note["deadline"])[:10]) - today).days
+            try:
+                days_left = (date.fromisoformat(str(note["deadline"])[:10]) - today).days
+            except ValueError:
+                logger.warning("Note %s has malformed deadline %r, skipping", note["id"], note["deadline"])
+                continue
             if days_left not in reminder_days:
                 continue
-            payload = json.dumps({"days_left": days_left}, ensure_ascii=False)
-            duplicate = await (await db.execute(
-                """SELECT 1 FROM notifications WHERE note_id=? AND type='deadline'
-                   AND date(scheduled_at)=? AND payload=? LIMIT 1""",
-                (note["id"], today.isoformat(), payload),
-            )).fetchone()
-            if duplicate:
-                continue
-            success = await notify_deadline(note, days_left)
-            await db.execute(
-                """INSERT INTO notifications
-                   (note_id, type, status, scheduled_at, sent_at, payload)
-                   VALUES (?, 'deadline', ?, ?, ?, ?)""",
-                (
-                    note["id"], "sent" if success else "failed",
-                    datetime.combine(today, datetime.min.time()).isoformat(),
-                    datetime.now().isoformat() if success else None, payload,
-                ),
-            )
-            if success:
+            try:
+                payload = json.dumps({"days_left": days_left}, ensure_ascii=False)
+                duplicate = await (await db.execute(
+                    """SELECT 1 FROM notifications WHERE note_id=? AND type='deadline'
+                       AND date(scheduled_at)=? AND payload=? LIMIT 1""",
+                    (note["id"], today.isoformat(), payload),
+                )).fetchone()
+                if duplicate:
+                    continue
+                success = await notify_deadline(note, days_left)
                 await db.execute(
-                    """INSERT INTO history (note_id, action, new_value)
-                       VALUES (?, 'deadline_reminded', ?)""",
-                    (note["id"], str(days_left)),
+                    """INSERT INTO notifications
+                       (note_id, type, status, scheduled_at, sent_at, payload)
+                       VALUES (?, 'deadline', ?, ?, ?, ?)""",
+                    (
+                        note["id"], "sent" if success else "failed",
+                        datetime.combine(today, datetime.min.time()).isoformat(),
+                        datetime.now().isoformat() if success else None, payload,
+                    ),
                 )
-                sent += 1
+                if success:
+                    await db.execute(
+                        """INSERT INTO history (note_id, action, new_value)
+                           VALUES (?, 'deadline_reminded', ?)""",
+                        (note["id"], str(days_left)),
+                    )
+                    sent += 1
+            except Exception:
+                logger.exception("Failed to process deadline notification for note %s", note["id"])
+                continue
         await db.commit()
     return sent
 
@@ -135,25 +148,29 @@ async def check_stale_projects(now: datetime | None = None) -> int:
         sent = 0
         for row in rows:
             note = row_to_note(row)
-            duplicate = await (await db.execute(
-                """SELECT 1 FROM notifications WHERE note_id=? AND type='stale'
-                   AND date(scheduled_at)=? LIMIT 1""",
-                (note["id"], now.date().isoformat()),
-            )).fetchone()
-            if duplicate:
+            try:
+                duplicate = await (await db.execute(
+                    """SELECT 1 FROM notifications WHERE note_id=? AND type='stale'
+                       AND date(scheduled_at)=? LIMIT 1""",
+                    (note["id"], now.date().isoformat()),
+                )).fetchone()
+                if duplicate:
+                    continue
+                success = await notify_stale(note)
+                await db.execute(
+                    """INSERT INTO notifications
+                       (note_id, type, status, scheduled_at, sent_at, payload)
+                       VALUES (?, 'stale', ?, ?, ?, ?)""",
+                    (
+                        note["id"], "sent" if success else "failed", now.isoformat(),
+                        now.isoformat() if success else None,
+                        json.dumps({"updated_at": str(note["updated_at"])}, ensure_ascii=False),
+                    ),
+                )
+                sent += int(success)
+            except Exception:
+                logger.exception("Failed to process stale notification for note %s", note["id"])
                 continue
-            success = await notify_stale(note)
-            await db.execute(
-                """INSERT INTO notifications
-                   (note_id, type, status, scheduled_at, sent_at, payload)
-                   VALUES (?, 'stale', ?, ?, ?, ?)""",
-                (
-                    note["id"], "sent" if success else "failed", now.isoformat(),
-                    now.isoformat() if success else None,
-                    json.dumps({"updated_at": str(note["updated_at"])}),
-                ),
-            )
-            sent += int(success)
         await db.commit()
     return sent
 
@@ -212,14 +229,25 @@ async def send_weekly_digest(now: datetime | None = None) -> bool:
     return success
 
 
-# Names used in the delivery plan, kept as job-callable aliases.
-reclassify_job = reclassify_low_confidence_notes
-auto_archive_job = auto_archive_completed
-deadline_check_job = check_deadlines_and_notify
-stale_project_job = check_stale_projects
-weekly_digest_job = send_weekly_digest
+def _log_job_error(event) -> None:
+    """Log a scheduled job failure without affecting other jobs' schedules."""
+    logger.error("Scheduled job %r failed: %s", event.job_id, event.exception)
+
+
+def _parse_digest_time() -> tuple[int, int]:
+    """Parse NOTIFY_DIGEST_TIME ('HH:MM') into an (hour, minute) tuple, defaulting to 08:00."""
+    try:
+        hour_str, minute_str = settings.NOTIFY_DIGEST_TIME.split(":", 1)
+        return int(hour_str), int(minute_str)
+    except (ValueError, AttributeError):
+        logger.warning("Invalid NOTIFY_DIGEST_TIME=%r, defaulting to 08:00", settings.NOTIFY_DIGEST_TIME)
+        return 8, 0
+
+
+_digest_hour, _digest_minute = _parse_digest_time()
 
 scheduler = AsyncIOScheduler()
+scheduler.add_listener(_log_job_error, EVENT_JOB_ERROR)
 scheduler.add_job(
     reclassify_low_confidence_notes,
     CronTrigger(hour=f"*/{settings.RECLASSIFY_INTERVAL_HOURS}"),
@@ -238,6 +266,6 @@ scheduler.add_job(
     id="stale_check", name="Check stale projects", replace_existing=True,
 )
 scheduler.add_job(
-    send_weekly_digest, CronTrigger(day_of_week=settings.NOTIFY_DIGEST_DAY, hour=8, minute=0),
+    send_weekly_digest, CronTrigger(day_of_week=settings.NOTIFY_DIGEST_DAY, hour=_digest_hour, minute=_digest_minute),
     id="weekly_digest", name="Send weekly digest", replace_existing=True,
 )

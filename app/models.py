@@ -31,24 +31,24 @@ class Note(BaseModel):
 
 
 class NoteCreate(BaseModel):
-    title: str
-    content: str
+    title: str = Field(min_length=1)
+    content: str = Field(min_length=1)
     source: str = "manual"
     auto_classify: bool = True
     tags_override: Optional[list[str]] = None
 
 
 class CronNoteCreate(BaseModel):
-    title: Optional[str] = None
-    content: str
+    title: Optional[str] = Field(default=None, min_length=1)
+    content: str = Field(min_length=1)
     source: str = "cron"
     auto_classify: bool = True
     tags_override: Optional[list[str]] = None
 
 
 class NoteUpdate(BaseModel):
-    title: Optional[str] = None
-    content: Optional[str] = None
+    title: Optional[str] = Field(default=None, min_length=1)
+    content: Optional[str] = Field(default=None, min_length=1)
     para_category: Optional[str] = None
     sub_category: Optional[str] = None
     status: Optional[str] = None
