@@ -13,13 +13,12 @@ logger = logging.getLogger("para.classifier")
 
 PARA_CATEGORIES = {"projects", "areas", "resources", "archives"}
 
-CLASSIFY_PROMPT = """You are a PARA note classifier. Classify this note into exactly one of:
-- "projects": Active work with a deadline or specific goal
-- "areas": Ongoing responsibility, no end date
-- "resources": Reference material, useful info, no action needed
-- "archives": Completed or no longer relevant
-
-Also extract:
+CLASSIFY_PROMPT = """You are a PARA note classifier. Respond with a JSON object with exactly these keys:
+- para_category: exactly one of "projects", "areas", "resources", "archives"
+  - "projects": Active work with a deadline or specific goal
+  - "areas": Ongoing responsibility, no end date
+  - "resources": Reference material, useful info, no action needed
+  - "archives": Completed or no longer relevant
 - sub_category: short label (1-3 words)
 - priority: low | medium | high
 - deadline: ISO date (YYYY-MM-DD) if found in text, else null
@@ -27,7 +26,7 @@ Also extract:
 - confidence: 0.0 to 1.0
 - reasoning: short explanation in Thai (1-2 sentences)
 
-Respond as JSON ONLY. No markdown, no explanation outside JSON.
+Respond as JSON ONLY, using the exact key name "para_category" for the classification. No markdown, no explanation outside JSON.
 
 Note title: {title}
 Note content: {content}
