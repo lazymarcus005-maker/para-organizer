@@ -79,7 +79,7 @@ async def test_note_with_args_creates_directly_and_clears_history(test_db, mock_
 async def test_note_without_args_distills_from_conversation_then_clears(test_db, mock_llm, monkeypatch):
     import app.chat as chat
 
-    async def fake_call_ollama(model, prompt=None, format="json", messages=None):
+    async def fake_call_ollama(model, prompt=None, format="json", messages=None, **kwargs):
         if messages and messages[0]["content"] == chat.DISTILL_SYSTEM_PROMPT:
             return "นัดหมอฟัน\nต้องไปหาหมอฟันวันศุกร์นี้"
         return "สวัสดีค่ะ"

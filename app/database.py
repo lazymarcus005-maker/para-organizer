@@ -7,15 +7,18 @@ from contextlib import asynccontextmanager
 import aiosqlite
 
 from app.config import settings
+from app.migrations import run_migrations
 
 logger = logging.getLogger("para.database")
 
 try:
     import sqlite_vec
     _SQLITE_VEC_AVAILABLE = True
+    logger.info("sqlite-vec extension available")
 except ImportError:
     sqlite_vec = None
     _SQLITE_VEC_AVAILABLE = False
+    logger.warning("sqlite-vec not available — vector store will not be created (non-blocking)")
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS notes (
@@ -33,6 +36,8 @@ CREATE TABLE IF NOT EXISTS notes (
     llm_model TEXT,
     llm_confidence REAL NOT NULL DEFAULT 0.0,
     llm_reasoning TEXT,
+    embedding_status TEXT DEFAULT 'pending',
+    recurrence TEXT,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     archived_at DATETIME
@@ -99,6 +104,19 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 
 CREATE INDEX IF NOT EXISTS idx_chat_messages_chat ON chat_messages(chat_id, id);
 
+CREATE TABLE IF NOT EXISTS llm_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts DATETIME DEFAULT CURRENT_TIMESTAMP,
+    model TEXT NOT NULL,
+    task TEXT NOT NULL,
+    prompt_tokens INTEGER,
+    completion_tokens INTEGER,
+    note_id INTEGER,
+    FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_llm_usage_ts ON llm_usage(ts);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
     title, content, tags,
     content='notes',
@@ -162,12 +180,18 @@ async def init_db() -> None:
         await db.execute("PRAGMA foreign_keys=ON;")
         await db.execute("PRAGMA busy_timeout=5000;")
         await db.executescript(SCHEMA_SQL)
-        if await _load_vec_extension(db):
+        vec_loaded = await _load_vec_extension(db)
+        if vec_loaded:
             try:
                 await db.executescript(VEC_SCHEMA_SQL.format(dimensions=settings.EMBED_DIMENSIONS))
             except aiosqlite.Error:
                 logger.warning("Failed to create note_embeddings vector table", exc_info=True)
+        await run_migrations(db)
         await db.commit()
+        logger.info(
+            "init_db complete (sqlite-vec %s)",
+            "loaded" if vec_loaded else "unavailable",
+        )
 
 
 @asynccontextmanager

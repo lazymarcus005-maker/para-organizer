@@ -59,7 +59,7 @@ def mock_llm(monkeypatch):
 def mock_chat_llm(monkeypatch):
     calls = []
 
-    async def fake_call_ollama(model, prompt=None, format="json", messages=None):
+    async def fake_call_ollama(model, prompt=None, format="json", messages=None, **kwargs):
         calls.append({"model": model, "prompt": prompt, "format": format, "messages": messages})
         return "สวัสดีค่ะ นี่คือคำตอบจำลองจากบอท"
 

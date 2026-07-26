@@ -25,6 +25,8 @@ class Note(BaseModel):
     llm_model: Optional[str] = None
     llm_confidence: float = 0.0
     llm_reasoning: Optional[str] = None
+    embedding_status: str = "pending"
+    recurrence: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     archived_at: Optional[datetime] = None

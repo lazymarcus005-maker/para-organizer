@@ -7,8 +7,15 @@ from fastapi import APIRouter, Depends, Query
 
 from app.database import get_db
 from app.models import PARA_CATEGORIES, PRIORITIES, STATUSES
+from app.usage import usage_summary
 
 router = APIRouter(prefix="/api", tags=["stats"])
+
+
+@router.get("/usage")
+async def get_usage(days: int = Query(default=7, ge=1, le=365)):
+    """LLM token usage over the last `days` days (read-only, no auth)."""
+    return await usage_summary(days)
 
 
 @router.get("/stats")
