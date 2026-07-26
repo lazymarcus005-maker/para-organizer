@@ -18,13 +18,17 @@ from app.mcp.mcp_server import (
     para_add_link,
     para_add_note,
     para_archive,
+    para_complete,
     para_deadlines,
+    para_delete,
     para_digest,
     para_get,
     para_list,
     para_move,
+    para_reclassify,
     para_search,
     para_stats,
+    para_update,
 )
 
 ALL_TOOLS = {
@@ -373,3 +377,169 @@ async def test_tool_callable_through_mcp_protocol(db):
     data = json.loads(result[0].text)
     assert data["total_notes"] == 1
     assert data["by_category"]["projects"] == 1
+
+
+# Tests for new Phase 1 tools
+
+
+@pytest.mark.asyncio
+async def test_para_update_single_field(db):
+    note_id = await make_note(title="Original Title", content="Original content", priority="low")
+    updated = await para_update(note_id, title="New Title")
+    assert updated["id"] == note_id
+    assert updated["title"] == "New Title"
+    assert updated["content"] == "Original content"  # unchanged
+    assert updated["priority"] == "low"  # unchanged
+
+
+@pytest.mark.asyncio
+async def test_para_update_multiple_fields(db):
+    note_id = await make_note(title="Original", content="body", priority="low")
+    updated = await para_update(note_id, title="New Title", priority="high", tags=["tag1", "tag2"])
+    assert updated["title"] == "New Title"
+    assert updated["priority"] == "high"
+    assert updated["tags"] == ["tag1", "tag2"]
+
+
+@pytest.mark.asyncio
+async def test_para_update_with_deadline(db):
+    note_id = await make_note(title="Task", content="do this")
+    updated = await para_update(note_id, deadline="2025-12-31")
+    assert updated["deadline"] == "2025-12-31"
+
+
+@pytest.mark.asyncio
+async def test_para_update_not_found(db):
+    result = await para_update(9999, title="New Title")
+    assert "error" in result
+    assert "not found" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_para_update_no_changes(db):
+    note_id = await make_note(title="Test", content="body")
+    updated = await para_update(note_id)
+    assert updated["id"] == note_id
+    assert updated["title"] == "Test"
+
+
+@pytest.mark.asyncio
+async def test_para_update_logs_history(db):
+    note_id = await make_note(title="Original", content="body")
+    await para_update(note_id, title="Updated")
+    
+    # Check that history was logged
+    async with get_connection() as conn:
+        cursor = await conn.execute(
+            "SELECT action, old_value, new_value FROM history WHERE note_id = ? AND action = 'updated'",
+            (note_id,),
+        )
+        rows = await cursor.fetchall()
+        assert len(rows) > 0
+        assert any(r["new_value"] == "Updated" for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_para_complete_changes_status(db):
+    note_id = await make_note(title="Task", status="active")
+    completed = await para_complete(note_id)
+    assert completed["status"] == "completed"
+    assert (await para_get(note_id))["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_para_complete_not_found(db):
+    result = await para_complete(9999)
+    assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_para_complete_logs_history(db):
+    note_id = await make_note(title="Task")
+    await para_complete(note_id)
+    
+    async with get_connection() as conn:
+        cursor = await conn.execute(
+            "SELECT action, new_value FROM history WHERE note_id = ? AND action = 'completed'",
+            (note_id,),
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+        assert row["action"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_para_delete_soft_deletes(db):
+    note_id = await make_note(title="Delete me", content="soon")
+    result = await para_delete(note_id)
+    assert result == {"deleted": note_id}
+    
+    # Verify archived_at is set
+    fetched = await para_get(note_id)
+    assert fetched["id"] == note_id
+    assert fetched["archived_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_para_delete_not_found(db):
+    result = await para_delete(9999)
+    assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_para_delete_logs_history(db):
+    note_id = await make_note(title="Task")
+    await para_delete(note_id)
+    
+    async with get_connection() as conn:
+        cursor = await conn.execute(
+            "SELECT action FROM history WHERE note_id = ? AND action = 'deleted'",
+            (note_id,),
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+
+
+@pytest.mark.asyncio
+async def test_para_reclassify_updates_category(db, mock_classifier):
+    note_id = await make_note(title="Server task", content="maintain contabo servers", 
+                              para_category="inbox", priority="low")
+    reclassified = await para_reclassify(note_id)
+    
+    # mock_classifier returns "projects" with "high" priority
+    assert reclassified["para_category"] == "projects"
+    assert reclassified["priority"] == "high"
+    assert reclassified["deadline"] == "2025-08-15"
+
+
+@pytest.mark.asyncio
+async def test_para_reclassify_updates_tags(db, mock_classifier):
+    note_id = await make_note(title="Task", tags=[])
+    reclassified = await para_reclassify(note_id)
+    
+    # mock_classifier returns tags with Thai/English mix
+    assert "รถยนต์" in reclassified["tags"]
+    assert "เอกสาร" in reclassified["tags"]
+
+
+@pytest.mark.asyncio
+async def test_para_reclassify_not_found(db):
+    result = await para_reclassify(9999)
+    assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_para_reclassify_logs_history(db, mock_classifier):
+    note_id = await make_note(title="Task", para_category="inbox")
+    await para_reclassify(note_id)
+    
+    async with get_connection() as conn:
+        cursor = await conn.execute(
+            "SELECT action, new_value FROM history WHERE note_id = ? AND action = 'reclassified'",
+            (note_id,),
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+        assert row["action"] == "reclassified"
+        assert row["new_value"] == "projects"
+
