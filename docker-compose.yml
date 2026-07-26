@@ -1,0 +1,109 @@
+version: '3.8'
+
+services:
+  # PARA Organizer FastAPI App
+  para-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: para-organizer-app
+    restart: unless-stopped
+    ports:
+      - "8731:8731"
+    environment:
+      # Core
+      - PARA_PORT=8731
+      - PARA_DB_PATH=/var/lib/para-organizer/data/para.db
+      - PARA_SECRET_KEY=${PARA_SECRET_KEY:-change-me-in-production}
+      
+      # LLM (Ollama Cloud)
+      - OLLAMA_API_KEY=${OLLAMA_API_KEY}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-https://ollama.com/v1}
+      - LLM_PRIMARY=${LLM_PRIMARY:-deepseek-v4-flash}
+      - LLM_FALLBACK=${LLM_FALLBACK:-gpt-oss:20b}
+      - LLM_TIMEOUT=${LLM_TIMEOUT:-60}
+      - LLM_MAX_RETRIES=${LLM_MAX_RETRIES:-2}
+      
+      # Telegram
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_WEBHOOK_URL=${TELEGRAM_WEBHOOK_URL}
+      - TELEGRAM_ALLOWED_USERS=${TELEGRAM_ALLOWED_USERS}
+      
+      # Notification
+      - NOTIFY_CHANNEL=${NOTIFY_CHANNEL:-telegram}
+      - NOTIFY_DEADLINE_DAYS=${NOTIFY_DEADLINE_DAYS:-7,3,1}
+      - NOTIFY_DIGEST_DAY=${NOTIFY_DIGEST_DAY:-mon}
+      - NOTIFY_DIGEST_TIME=${NOTIFY_DIGEST_TIME:-08:00}
+      - NOTIFY_STALE_DAYS=${NOTIFY_STALE_DAYS:-14}
+      
+      # Auto
+      - AUTO_ARCHIVE_DAYS=${AUTO_ARCHIVE_DAYS:-30}
+      - RECLASSIFY_INTERVAL_HOURS=${RECLASSIFY_INTERVAL_HOURS:-6}
+      - RECLASSIFY_CONFIDENCE_THRESHOLD=${RECLASSIFY_CONFIDENCE_THRESHOLD:-0.7}
+      
+      # Web
+      - WEB_PUBLIC_URL=${WEB_PUBLIC_URL:-http://localhost:8731}
+    
+    volumes:
+      # Data persistence
+      - para-data:/var/lib/para-organizer/data
+      # Optional: Mount source for development
+      # - ./app:/app/app
+      # - ./scripts:/app/scripts
+    
+    networks:
+      - para-network
+    
+    depends_on:
+      - para-init
+    
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Database initialization service
+  para-init:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: para-organizer-init
+    command: python3 scripts/init_db.py
+    environment:
+      - PARA_DB_PATH=/var/lib/para-organizer/data/para.db
+    volumes:
+      - para-data:/var/lib/para-organizer/data
+    networks:
+      - para-network
+    # This runs once and exits
+    restart: "no"
+
+  # Optional: Nginx reverse proxy (uncomment to enable)
+  # para-nginx:
+  #   image: nginx:alpine
+  #   container_name: para-organizer-nginx
+  #   restart: unless-stopped
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./nginx.conf:/etc/nginx/nginx.conf:ro
+  #     - ./certs:/etc/nginx/certs:ro
+  #   depends_on:
+  #     - para-app
+  #   networks:
+  #     - para-network
+  #   logging:
+  #     driver: "json-file"
+  #     options:
+  #       max-size: "10m"
+  #       max-file: "3"
+
+volumes:
+  para-data:
+    driver: local
+
+networks:
+  para-network:
+    driver: bridge
