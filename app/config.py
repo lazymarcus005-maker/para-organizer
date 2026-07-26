@@ -5,6 +5,12 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+def _cast_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
 # Settings keys that can be overridden at runtime via PUT /api/settings and are
 # persisted in the `settings` table. Kept in sync with app.routes.settings.SETTINGS_KEYS.
 _PERSISTED_SETTING_CASTS = {
@@ -18,6 +24,9 @@ _PERSISTED_SETTING_CASTS = {
     "CHAT_MODEL": str,
     "CHAT_HISTORY_MAX": int,
     "CHAT_SYSTEM_PROMPT": str,
+    "RAG_HYBRID_ENABLED": _cast_bool,
+    "RAG_HYBRID_RATIO": float,
+    "RAG_SEARCH_LIMIT": int,
 }
 
 
@@ -69,6 +78,16 @@ class Settings(BaseSettings):
         "PARA notes when relevant, help brainstorm and plan, and keep replies concise, "
         "in Thai and English."
     )
+
+    # ─── Embeddings (hybrid RAG) ───
+    EMBED_PROVIDER: str = "ollama_local"
+    EMBED_BASE_URL: str = "http://localhost:11434"
+    EMBED_MODEL: str = "nomic-embed-text"
+    EMBED_API_KEY: str = ""
+    EMBED_DIMENSIONS: int = 768
+    RAG_HYBRID_ENABLED: bool = True
+    RAG_HYBRID_RATIO: float = 0.5
+    RAG_SEARCH_LIMIT: int = 5
 
 
 settings = Settings()
