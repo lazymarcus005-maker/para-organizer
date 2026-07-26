@@ -134,4 +134,21 @@ async function loadDeadlines() {
 document.addEventListener("DOMContentLoaded", () => {
     initializeNavigation();
     loadDeadlines();
+    initializeQuickCaptureShortcut();
 });
+
+/**
+ * Initialize quick-capture keyboard shortcut (Cmd/Ctrl+K)
+ * Available on all pages, navigates to quick-capture page
+ */
+function initializeQuickCaptureShortcut() {
+    document.addEventListener("keydown", (event) => {
+        const isMac = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+        const isQuickCaptureKey = isMac ? event.metaKey : event.ctrlKey;
+        
+        if (isQuickCaptureKey && event.key === "k") {
+            event.preventDefault();
+            window.location.href = "/";
+        }
+    });
+}

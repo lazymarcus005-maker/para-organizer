@@ -1,0 +1,109 @@
+/**
+ * Quick-capture UI styling
+ * Minimal, clean design with dark/light mode support
+ */
+
+/* Base styles */
+:root {
+    color-scheme: light dark;
+}
+
+/* Keyboard shortcut indicator */
+kbd {
+    font-family: "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas, "Courier New", monospace;
+    font-feature-settings: "kern" 1;
+}
+
+/* Toast animations */
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateY(1rem);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+#toast.flex,
+#error-toast.flex {
+    animation: slideIn 0.3s ease-out;
+}
+
+/* Responsive adjustments */
+@media (prefers-color-scheme: dark) {
+    body {
+        background-color: #0f172a;
+        color: #e2e8f0;
+    }
+
+    .text-slate-900 {
+        color: #e2e8f0;
+    }
+
+    .text-slate-500 {
+        color: #94a3b8;
+    }
+
+    .bg-white {
+        background-color: #1e293b;
+    }
+
+    .border-slate-200 {
+        border-color: #334155;
+    }
+
+    .border-slate-300 {
+        border-color: #475569;
+    }
+
+    .bg-slate-100 {
+        background-color: #334155;
+    }
+
+    .text-slate-700 {
+        color: #cbd5e1;
+    }
+
+    .placeholder\:text-slate-400::placeholder {
+        color: #94a3b8;
+    }
+
+    .focus\:border-emerald-500:focus {
+        border-color: #10b981;
+    }
+
+    .focus\:ring-emerald-500\/20:focus {
+        box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+    }
+
+    .text-slate-400 {
+        color: #94a3b8;
+    }
+
+    .shadow-md {
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+    }
+
+    .shadow-lg {
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+    }
+}
+
+/* Accessibility */
+@media (prefers-reduced-motion: reduce) {
+    #toast.flex,
+    #error-toast.flex {
+        animation: none;
+    }
+}
+
+/* Print styles */
+@media print {
+    #toast,
+    #error-toast,
+    .fixed {
+        display: none !important;
+    }
+}
