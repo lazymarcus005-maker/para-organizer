@@ -22,6 +22,7 @@ logger = logging.getLogger("para.migrations")
 # Ordered list of migration module names (without the .py suffix).
 _MIGRATION_NAMES = [
     "001_initial_schema",
+    "002_add_summary_column",
 ]
 
 MIGRATIONS = [
