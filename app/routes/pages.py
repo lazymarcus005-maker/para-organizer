@@ -34,6 +34,11 @@ async def index(request: Request, db: aiosqlite.Connection = Depends(get_db)):
     )
 
 
+@router.get("/board")
+async def board_page(request: Request, db: aiosqlite.Connection = Depends(get_db)):
+    return templates.TemplateResponse(request, "board.html", {})
+
+
 @router.get("/partials/board")
 async def board_partial(request: Request, db: aiosqlite.Connection = Depends(get_db)):
     tree = await api_para_tree(db)

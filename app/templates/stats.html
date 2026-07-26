@@ -4,11 +4,12 @@
 <div class="mx-auto max-w-6xl">
     <div class="mb-6">
         <p class="mb-1 text-sm font-medium text-emerald-600">Overview</p>
-        <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">Statistics</h1>
-        <p class="mt-1 text-sm text-slate-500">A simple view of your PARA workspace.</p>
+        <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">Statistics & Usage</h1>
+        <p class="mt-1 text-sm text-slate-500">View your PARA workspace and LLM usage analytics.</p>
     </div>
 
-    <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+    <!-- KPI Cards -->
+    <div class="grid grid-cols-2 gap-4 lg:grid-cols-4 mb-6">
         <div class="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
             <p class="text-sm text-slate-500">Total notes</p>
             <p class="mt-2 text-3xl font-semibold tracking-tight">{{ stats.total_notes }}</p>
@@ -27,6 +28,80 @@
         </div>
     </div>
 
+    <!-- LLM Usage Dashboard -->
+    <div class="mb-6">
+        <p class="mb-3 text-sm font-medium text-emerald-600">LLM Usage (Last 7 Days)</p>
+        <div class="grid gap-4 lg:grid-cols-2">
+            <!-- Total Tokens Card -->
+            <div class="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+                <h3 class="text-sm font-semibold text-slate-900 mb-4">Total Tokens</h3>
+                <div class="grid grid-cols-3 gap-3">
+                    <div>
+                        <p class="text-xs text-slate-500 mb-1">Prompt</p>
+                        <p class="text-2xl font-semibold text-emerald-600" data-tokens="prompt">0</p>
+                    </div>
+                    <div>
+                        <p class="text-xs text-slate-500 mb-1">Completion</p>
+                        <p class="text-2xl font-semibold text-blue-600" data-tokens="completion">0</p>
+                    </div>
+                    <div>
+                        <p class="text-xs text-slate-500 mb-1">Total</p>
+                        <p class="text-2xl font-semibold text-slate-900" data-tokens="total">0</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Cost Estimate Card -->
+            <div class="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+                <h3 class="text-sm font-semibold text-slate-900 mb-4">Cost Estimate</h3>
+                <div class="space-y-2">
+                    <div class="flex justify-between items-center">
+                        <span class="text-sm text-slate-600">Estimated Cost</span>
+                        <span class="text-2xl font-semibold text-slate-900" data-cost>$0.00</span>
+                    </div>
+                    <p class="text-xs text-slate-500">Based on common model pricing</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts Section -->
+    <div class="grid gap-4 lg:grid-cols-2 mb-6">
+        <!-- Tokens per Model (Pie Chart) -->
+        <section class="rounded-lg border border-slate-200 bg-white shadow-sm p-5">
+            <header class="mb-4">
+                <h2 class="text-sm font-semibold text-slate-900">Tokens per Model</h2>
+                <p class="mt-0.5 text-xs text-slate-500">Token distribution by model</p>
+            </header>
+            <div class="relative" style="height: 300px;">
+                <canvas id="modelPieChart"></canvas>
+            </div>
+        </section>
+
+        <!-- Tokens per Task (Bar Chart) -->
+        <section class="rounded-lg border border-slate-200 bg-white shadow-sm p-5">
+            <header class="mb-4">
+                <h2 class="text-sm font-semibold text-slate-900">Tokens per Task</h2>
+                <p class="mt-0.5 text-xs text-slate-500">Token usage by task type</p>
+            </header>
+            <div class="relative" style="height: 300px;">
+                <canvas id="taskBarChart"></canvas>
+            </div>
+        </section>
+    </div>
+
+    <!-- Trend Chart -->
+    <section class="rounded-lg border border-slate-200 bg-white shadow-sm p-5 mb-6">
+        <header class="mb-4">
+            <h2 class="text-sm font-semibold text-slate-900">Daily Token Trend</h2>
+            <p class="mt-0.5 text-xs text-slate-500">Token usage over the last 7 days</p>
+        </header>
+        <div class="relative" style="height: 300px;">
+            <canvas id="trendLineChart"></canvas>
+        </div>
+    </section>
+
+    <!-- Notes by Category -->
     <div class="mt-4 grid gap-4 lg:grid-cols-2">
         <section class="rounded-lg border border-slate-200 bg-white shadow-sm">
             <header class="border-b border-slate-200 px-5 py-4">
@@ -59,6 +134,7 @@
         </section>
     </div>
 
+    <!-- Upcoming Deadlines -->
     <section class="mt-4 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
         <header class="flex items-center justify-between border-b border-slate-200 px-5 py-4">
             <div>
@@ -71,4 +147,9 @@
         </div>
     </section>
 </div>
+
+<!-- Chart.js library -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+<!-- Statistics page script -->
+<script src="/static/stats.js" defer></script>
 {% endblock %}
