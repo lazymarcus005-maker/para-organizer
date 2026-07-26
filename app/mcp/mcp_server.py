@@ -569,6 +569,72 @@ async def para_reclassify(id: int) -> dict:
         return await _fetch_note(db, id)
 
 
+@mcp.tool()
+async def para_ask(question: str) -> dict:
+    """Ask a question across all PARA notes via RAG (semantic + keyword hybrid search).
+    
+    Finds relevant notes using hybrid retrieval, generates answer via LLM,
+    returns answer with cited source note IDs.
+    
+    Args:
+        question: Natural language question
+    
+    Returns:
+        {
+            "answer": "...",
+            "sources": [{"note_id": X, "title": "...", "relevance": 0.85}, ...]
+        }
+    """
+    from app.chat import _build_context
+    
+    async with get_connection() as db:
+        # Use existing RAG logic from chat.py to find relevant notes
+        try:
+            context = await _build_context(db, question)
+            if not context.get("notes"):
+                return {
+                    "answer": "No relevant notes found to answer this question.",
+                    "sources": []
+                }
+            
+            # Call LLM to generate answer based on context
+            from app.chat import call_ollama
+            prompt = f"""Based on the following notes, answer this question:
+Question: {question}
+
+Notes:
+{context.get('notes', '')}
+
+Provide a concise, actionable answer."""
+            
+            answer = await call_ollama(
+                settings.CHAT_MODEL,
+                prompt,
+                task="ask"
+            )
+            
+            # Extract source notes from context
+            sources = []
+            for note_data in context.get("note_list", [])[:3]:  # Top 3 sources
+                sources.append({
+                    "note_id": note_data.get("id"),
+                    "title": note_data.get("title"),
+                    "relevance": note_data.get("similarity", 0.0)
+                })
+            
+            return {
+                "answer": answer,
+                "sources": sources
+            }
+        except Exception as e:
+            logger.error("Error in para_ask: %s", e)
+            return {
+                "error": f"Failed to generate answer: {str(e)}",
+                "answer": None,
+                "sources": []
+            }
+
+
 def main() -> None:
     """Initialize the database and run the MCP server over stdio."""
     if "-h" in sys.argv[1:] or "--help" in sys.argv[1:]:

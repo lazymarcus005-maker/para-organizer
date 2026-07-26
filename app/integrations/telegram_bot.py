@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import io
 import json
 import logging
+import os
 from datetime import date, timedelta
 from typing import Any
 
 import aiosqlite
+import httpx
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.chat import chat_reply, clear_history, distill_note_from_history
@@ -258,6 +261,61 @@ async def _note_from_conversation(chat_id: int, message_id: int | None) -> str:
     return format_note_created(note)
 
 
+async def _handle_voice_message(chat_id: int, voice: dict) -> None:
+    """Handle voice message: download, transcribe with Whisper, create note."""
+    try:
+        file_id = voice.get("file_id")
+        if not file_id:
+            await send_telegram(chat_id, "❌ Could not access voice file")
+            return
+        
+        # Download file from Telegram
+        from telegram import Bot
+        async with Bot(settings.TELEGRAM_BOT_TOKEN) as bot:
+            file_obj = await bot.get_file(file_id)
+            file_data = await file_obj.download_as_bytearray()
+        
+        # Transcribe using Whisper via Claude Code / Hermes
+        # Try to use local whisper or external API
+        text = await _transcribe_audio(file_data)
+        if not text:
+            await send_telegram(chat_id, "❌ Could not transcribe voice message")
+            return
+        
+        # Create note from transcribed text
+        note = await _create_note(text, chat_id, None)
+        await send_telegram(chat_id, format_note_created(note))
+    except Exception:
+        logger.exception("Failed to handle voice message")
+        await send_telegram(chat_id, "❌ Error processing voice message")
+
+
+async def _transcribe_audio(audio_bytes: bytearray) -> str | None:
+    """Transcribe audio using Whisper API (OpenAI via Hermes)."""
+    try:
+        # Use OpenAI Whisper API if available, else try local whisper
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            logger.warning("OPENAI_API_KEY not set; Whisper transcription unavailable")
+            return None
+        
+        # Send to OpenAI Whisper API
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.openai.com/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {api_key}"},
+                files={"file": ("audio.ogg", io.BytesIO(audio_bytes), "audio/ogg")},
+                data={"model": "whisper-1"},
+                timeout=60.0,
+            )
+            response.raise_for_status()
+            result = response.json()
+            return result.get("text", "").strip()
+    except Exception:
+        logger.exception("Failed to transcribe audio")
+        return None
+
+
 async def handle_text(text: str, chat_id: int, message_id: int | None = None) -> tuple[str, Any | None]:
     """Handle one text message and return reply text plus optional reply markup."""
     text = text.strip()
@@ -327,10 +385,51 @@ async def _handle_update(update: dict) -> None:
         if data.startswith("list:"):
             category = data.partition(":")[2]
             await send_telegram(chat_id, await _list_notes(category))
+        elif data.startswith("stale:"):
+            # Handle stale project Keep/Archive buttons
+            parts = data.split(":")
+            if len(parts) == 3:
+                action, note_id_str = parts[1], parts[2]
+                try:
+                    note_id = int(note_id_str)
+                    async with get_connection() as db:
+                        row = await (await db.execute(
+                            "SELECT para_category FROM notes WHERE id = ?", (note_id,)
+                        )).fetchone()
+                        if not row:
+                            await send_telegram(chat_id, "❌ Note not found")
+                            return
+                        
+                        if action == "keep":
+                            # Update last_checked to mark as current
+                            await db.execute(
+                                "UPDATE notes SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                                (note_id,),
+                            )
+                            await db.execute(
+                                "INSERT INTO history (note_id, action, new_value, reason) VALUES (?, 'keep_stale', ?, ?)",
+                                (note_id, "active", "User confirmed project is still active"),
+                            )
+                            await send_telegram(chat_id, f"✅ Marked as active! Will remind you in {settings.NOTIFY_STALE_DAYS} days.")
+                        elif action == "archive":
+                            # Archive the project
+                            await db.execute(
+                                "UPDATE notes SET status = 'archived', para_category = 'archives', archived_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                                (note_id,),
+                            )
+                            await db.execute(
+                                "INSERT INTO history (note_id, action, old_value, new_value, reason) VALUES (?, 'archived', ?, 'archives', ?)",
+                                (note_id, row["para_category"], "Archived from stale nudge"),
+                            )
+                            await send_telegram(chat_id, f"📦 Archived! You can restore it anytime.")
+                        
+                        await db.commit()
+                except (ValueError, IndexError):
+                    await send_telegram(chat_id, "❌ Invalid note ID")
         return
 
     message = update.get("message") or update.get("edited_message")
-    if not isinstance(message, dict) or not isinstance(message.get("text"), str):
+    if not isinstance(message, dict):
         return
     chat_id = message.get("chat", {}).get("id")
     user_id = message.get("from", {}).get("id", chat_id)
@@ -338,6 +437,16 @@ async def _handle_update(update: dict) -> None:
         return
     if allowed_user_ids() and user_id not in allowed_user_ids():
         logger.warning("Ignoring Telegram update from unauthorized user %s", user_id)
+        return
+    
+    # Handle voice messages (IMP-13)
+    voice = message.get("voice")
+    if voice and isinstance(voice, dict):
+        await _handle_voice_message(chat_id, voice)
+        return
+    
+    # Handle text messages
+    if not isinstance(message.get("text"), str):
         return
     reply, markup = await handle_text(message["text"], chat_id, message.get("message_id"))
     await send_telegram(chat_id, reply, reply_markup=markup)
