@@ -12,6 +12,7 @@ from app.config import settings
 from app.database import get_db
 from app.models import NoteCreate, NoteMove, NoteUpdate, PARA_CATEGORIES, PRIORITIES, STATUSES
 from app.utils import row_to_note
+from app.vector_store import delete_note_embedding, index_note
 
 logger = logging.getLogger("para.routes.notes")
 router = APIRouter(prefix="/api", tags=["notes"])
@@ -87,6 +88,11 @@ async def create_note(payload: NoteCreate, db: aiosqlite.Connection = Depends(ge
         await _log_history(db, note_id, "classified", new_value=para_category, reason=llm_reasoning)
     await db.commit()
 
+    try:
+        await index_note(db, note_id, payload.content)
+    except Exception:
+        logger.warning("Failed to index embedding for note %s", note_id, exc_info=True)
+
     return await _fetch_note(db, note_id)
 
 
@@ -161,6 +167,11 @@ async def update_note(note_id: int, payload: NoteUpdate, db: aiosqlite.Connectio
                         new_value=json.dumps(fields, default=str, ensure_ascii=False))
     await db.commit()
 
+    try:
+        await index_note(db, note_id, fields.get("content") or existing["content"])
+    except Exception:
+        logger.warning("Failed to re-index embedding for note %s", note_id, exc_info=True)
+
     return await _fetch_note(db, note_id)
 
 
@@ -169,6 +180,12 @@ async def delete_note(note_id: int, db: aiosqlite.Connection = Depends(get_db)):
     await _fetch_note(db, note_id)
     await db.execute("DELETE FROM notes WHERE id = ?", (note_id,))
     await db.commit()
+
+    try:
+        await delete_note_embedding(db, note_id)
+    except Exception:
+        pass
+
     return {"deleted": note_id}
 
 

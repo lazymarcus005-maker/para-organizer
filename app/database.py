@@ -1,11 +1,21 @@
 """SQLite connection management (WAL mode) and schema migrations."""
 
+import logging
 import os
 from contextlib import asynccontextmanager
 
 import aiosqlite
 
 from app.config import settings
+
+logger = logging.getLogger("para.database")
+
+try:
+    import sqlite_vec
+    _SQLITE_VEC_AVAILABLE = True
+except ImportError:
+    sqlite_vec = None
+    _SQLITE_VEC_AVAILABLE = False
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS notes (
@@ -113,6 +123,34 @@ CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE ON notes BEGIN
 END;
 """
 
+# Vector store for hybrid RAG semantic search — a separate virtual table (not part
+# of SCHEMA_SQL) because it requires the sqlite-vec extension to be loaded on the
+# connection *before* it can be created or queried; see _load_vec_extension().
+VEC_SCHEMA_SQL = """
+CREATE VIRTUAL TABLE IF NOT EXISTS note_embeddings USING vec0(
+    embedding float[{dimensions}]
+);
+"""
+
+
+async def _load_vec_extension(db: aiosqlite.Connection) -> bool:
+    """Load the sqlite-vec extension onto this connection. Returns False (and logs
+    a warning, once) if the package isn't installed or the extension can't load —
+    callers degrade to keyword-only (FTS) search in that case."""
+    if not _SQLITE_VEC_AVAILABLE:
+        return False
+    try:
+        await db.enable_load_extension(True)
+        await db.load_extension(sqlite_vec.loadable_path())
+        await db.enable_load_extension(False)
+        return True
+    except (aiosqlite.Error, AttributeError, OSError):
+        logger.warning(
+            "Failed to load sqlite-vec extension; semantic search disabled, "
+            "falling back to keyword-only retrieval", exc_info=True,
+        )
+        return False
+
 
 async def init_db() -> None:
     """Create the database file (if needed) and run migrations."""
@@ -124,6 +162,11 @@ async def init_db() -> None:
         await db.execute("PRAGMA foreign_keys=ON;")
         await db.execute("PRAGMA busy_timeout=5000;")
         await db.executescript(SCHEMA_SQL)
+        if await _load_vec_extension(db):
+            try:
+                await db.executescript(VEC_SCHEMA_SQL.format(dimensions=settings.EMBED_DIMENSIONS))
+            except aiosqlite.Error:
+                logger.warning("Failed to create note_embeddings vector table", exc_info=True)
         await db.commit()
 
 
@@ -135,6 +178,7 @@ async def get_connection():
     try:
         await db.execute("PRAGMA foreign_keys=ON;")
         await db.execute("PRAGMA busy_timeout=5000;")
+        await _load_vec_extension(db)
         yield db
     finally:
         await db.close()

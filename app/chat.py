@@ -13,6 +13,8 @@ import httpx
 from app.classifier import call_ollama
 from app.config import settings
 from app.database import get_connection
+from app.embed import embed_text
+from app.vector_store import semantic_search
 
 logger = logging.getLogger("para.chat")
 
@@ -104,10 +106,50 @@ async def _quick_stats(db: aiosqlite.Connection) -> str:
     )
 
 
+async def _hybrid_retrieve(user_text: str, db: aiosqlite.Connection) -> list:
+    """Merge keyword (FTS5/BM25) and semantic (vector) search into one ranked
+    list of notes, weighted by RAG_HYBRID_RATIO. Falls back to FTS-only if
+    semantic search is disabled or unavailable (embedding provider down, no
+    vector index yet, etc.) — it never blocks keyword retrieval."""
+    scores: dict[int, dict[str, float]] = {}
+
+    if settings.RAG_HYBRID_ENABLED:
+        try:
+            query_embedding = await embed_text(user_text)
+            if query_embedding:
+                for note_id, score in await semantic_search(db, query_embedding, limit=settings.RAG_SEARCH_LIMIT):
+                    scores.setdefault(note_id, {})["semantic"] = score
+        except Exception:
+            logger.warning("Semantic search failed, falling back to FTS only", exc_info=True)
+
+    fts_matches = await _search_notes(db, user_text, limit=settings.RAG_SEARCH_LIMIT)
+    for rank, row in enumerate(fts_matches):
+        scores.setdefault(row["id"], {})["fts"] = 1.0 / (rank + 1.0)
+
+    if not scores:
+        return []
+
+    ratio = settings.RAG_HYBRID_RATIO
+    for note_scores in scores.values():
+        note_scores["combined"] = (
+            ratio * note_scores.get("semantic", 0.0) + (1 - ratio) * note_scores.get("fts", 0.0)
+        )
+
+    top_ids = sorted(scores, key=lambda nid: scores[nid]["combined"], reverse=True)[:settings.RAG_SEARCH_LIMIT]
+
+    placeholders = ",".join("?" * len(top_ids))
+    rows = await (await db.execute(
+        f"SELECT id, title, content, para_category FROM notes WHERE id IN ({placeholders})",
+        top_ids,
+    )).fetchall()
+    by_id = {row["id"]: row for row in rows}
+    return [by_id[nid] for nid in top_ids if nid in by_id]
+
+
 async def _build_context(user_text: str) -> str:
     """Compact RAG summary: matching notes, near-term deadlines, and quick stats."""
     async with get_connection() as db:
-        matched = await _search_notes(db, user_text)
+        matched = await _hybrid_retrieve(user_text, db)
         deadlines = await _upcoming_deadlines(db)
         stats = await _quick_stats(db)
 

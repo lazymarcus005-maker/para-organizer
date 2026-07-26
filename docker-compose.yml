@@ -8,8 +8,10 @@ services:
       dockerfile: Dockerfile
     container_name: para-organizer-app
     restart: unless-stopped
-    ports:
-      - "8731:8731"
+    # host networking so the container can reach a local Ollama instance at
+    # localhost:11434 for embeddings (EMBED_BASE_URL); the app itself still
+    # binds directly to the host's 8731 (no "ports:"/"networks:" under host mode).
+    network_mode: host
     environment:
       # Core
       - PARA_PORT=8731
@@ -43,17 +45,22 @@ services:
       
       # Web
       - WEB_PUBLIC_URL=${WEB_PUBLIC_URL:-http://localhost:8731}
-    
+
+      # Embeddings (hybrid RAG)
+      - EMBED_PROVIDER=${EMBED_PROVIDER:-ollama_local}
+      - EMBED_BASE_URL=${EMBED_BASE_URL:-http://localhost:11434}
+      - EMBED_MODEL=${EMBED_MODEL:-nomic-embed-text}
+      - EMBED_API_KEY=${EMBED_API_KEY}
+      - RAG_HYBRID_ENABLED=${RAG_HYBRID_ENABLED:-true}
+      - RAG_HYBRID_RATIO=${RAG_HYBRID_RATIO:-0.5}
+
     volumes:
       # Data persistence
       - para-data:/var/lib/para-organizer/data
       # Optional: Mount source for development
       # - ./app:/app/app
       # - ./scripts:/app/scripts
-    
-    networks:
-      - para-network
-    
+
     depends_on:
       - para-init
     

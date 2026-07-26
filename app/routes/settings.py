@@ -6,7 +6,7 @@ import re
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.config import settings
+from app.config import _cast_bool, settings
 from app.database import get_db
 from app.routes.notes import require_api_key
 from app.scheduler import digest_trigger, reclassify_trigger, scheduler
@@ -25,6 +25,9 @@ SETTINGS_KEYS: dict[str, type] = {
     "CHAT_MODEL": str,
     "CHAT_HISTORY_MAX": int,
     "CHAT_SYSTEM_PROMPT": str,
+    "RAG_HYBRID_ENABLED": _cast_bool,
+    "RAG_HYBRID_RATIO": float,
+    "RAG_SEARCH_LIMIT": int,
 }
 
 _DAY_OF_WEEK_RE = re.compile(
@@ -53,10 +56,13 @@ def _validate_setting(key: str, value) -> None:
     elif key == "NOTIFY_DIGEST_TIME":
         if not _DIGEST_TIME_RE.match(str(value)):
             raise HTTPException(status_code=422, detail="NOTIFY_DIGEST_TIME must be in HH:MM format")
-    elif key in ("NOTIFY_STALE_DAYS", "AUTO_ARCHIVE_DAYS", "RECLASSIFY_INTERVAL_HOURS", "CHAT_HISTORY_MAX") and value <= 0:
+    elif key in ("NOTIFY_STALE_DAYS", "AUTO_ARCHIVE_DAYS", "RECLASSIFY_INTERVAL_HOURS", "CHAT_HISTORY_MAX",
+                 "RAG_SEARCH_LIMIT") and value <= 0:
         raise HTTPException(status_code=422, detail=f"{key} must be a positive integer")
     elif key == "RECLASSIFY_CONFIDENCE_THRESHOLD" and not 0.0 <= value <= 1.0:
         raise HTTPException(status_code=422, detail="RECLASSIFY_CONFIDENCE_THRESHOLD must be between 0.0 and 1.0")
+    elif key == "RAG_HYBRID_RATIO" and not 0.0 <= value <= 1.0:
+        raise HTTPException(status_code=422, detail="RAG_HYBRID_RATIO must be between 0.0 and 1.0")
 
 
 async def get_settings_dict(db: aiosqlite.Connection) -> dict:
