@@ -4,13 +4,16 @@ from datetime import date, datetime, timedelta
 
 import pytest
 
+from app.config import settings
 from app.database import get_connection
 from app.scheduler import (
     auto_archive_completed,
     build_digest,
     check_deadlines_and_notify,
     check_stale_projects,
+    digest_trigger,
     reclassify_low_confidence_notes,
+    reclassify_trigger,
     scheduler,
     send_weekly_digest,
 )
@@ -21,6 +24,18 @@ def test_scheduler_registers_exactly_five_jobs():
     assert {job.id for job in scheduler.get_jobs()} == {
         "reclassify", "auto_archive", "deadline_check", "stale_check", "weekly_digest"
     }
+
+
+def test_reclassify_trigger_falls_back_on_invalid_interval(monkeypatch):
+    # A persisted 0/negative would make CronTrigger("*/0") raise and brick startup.
+    for bad in (0, -1):
+        monkeypatch.setattr(settings, "RECLASSIFY_INTERVAL_HOURS", bad)
+        assert "*/6" in str(reclassify_trigger())
+
+
+def test_digest_trigger_falls_back_on_invalid_day(monkeypatch):
+    monkeypatch.setattr(settings, "NOTIFY_DIGEST_DAY", "not-a-day")
+    assert "mon" in str(digest_trigger())
 
 
 @pytest.mark.asyncio

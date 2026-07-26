@@ -1,5 +1,7 @@
 """/api/search — FTS5 full-text search."""
 
+import html
+
 import aiosqlite
 from fastapi import APIRouter, Depends, Query
 
@@ -8,6 +10,13 @@ from app.utils import row_to_note
 
 router = APIRouter(prefix="/api/search", tags=["search"])
 
+# Delimiters passed to SQLite's snippet() that are then HTML-escaped along with
+# the rest of the snippet before being swapped for real <mark> tags — this keeps
+# note content that happens to contain "<"/">"/"&" from being rendered as raw
+# HTML (stored XSS) when the snippet is shown with the `|safe` filter.
+_SNIPPET_START = "\x01"
+_SNIPPET_END = "\x02"
+
 
 def _build_match_query(q: str) -> str:
     """Turn free text into a safe FTS5 MATCH expression (prefix OR per token)."""
@@ -15,6 +24,15 @@ def _build_match_query(q: str) -> str:
     if not tokens:
         return ""
     return " OR ".join(f'"{t}"*' for t in tokens)
+
+
+def _escape_snippet(raw: str) -> str:
+    """HTML-escape a snippet's text while preserving our <mark> highlight tags."""
+    return (
+        html.escape(raw)
+        .replace(_SNIPPET_START, "<mark>")
+        .replace(_SNIPPET_END, "</mark>")
+    )
 
 
 @router.get("")
@@ -28,9 +46,9 @@ async def search_notes(
         return {"results": [], "total": 0}
 
     cursor = await db.execute(
-        """
+        f"""
         SELECT notes.*, bm25(notes_fts) AS rank,
-               snippet(notes_fts, 1, '<mark>', '</mark>', '...', 10) AS snippet
+               snippet(notes_fts, 1, '{_SNIPPET_START}', '{_SNIPPET_END}', '...', 10) AS snippet
         FROM notes_fts
         JOIN notes ON notes.id = notes_fts.rowid
         WHERE notes_fts MATCH ?
@@ -47,7 +65,7 @@ async def search_notes(
         results.append({
             "id": note["id"],
             "title": note["title"],
-            "snippet": row["snippet"],
+            "snippet": _escape_snippet(row["snippet"]),
             "para_category": note["para_category"],
             "priority": note["priority"],
             "tags": note["tags"],

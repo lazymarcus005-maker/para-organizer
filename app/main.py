@@ -8,7 +8,19 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app.database import init_db
-from app.routes import cron_webhook, export, notes, pages, para, search, stats, telegram_webhook
+from app.routes import (
+    backup,
+    cron_webhook,
+    export,
+    import_export,
+    notes,
+    pages,
+    para,
+    search,
+    settings,
+    stats,
+    telegram_webhook,
+)
 from app.scheduler import scheduler
 
 logging.basicConfig(level=logging.INFO)
@@ -36,6 +48,9 @@ app.include_router(para.router)
 app.include_router(search.router)
 app.include_router(stats.router)
 app.include_router(export.router)
+app.include_router(backup.router)
+app.include_router(import_export.router)
+app.include_router(settings.router)
 app.include_router(telegram_webhook.router)
 app.include_router(cron_webhook.router)
 app.include_router(pages.router)
