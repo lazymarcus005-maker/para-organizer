@@ -133,6 +133,10 @@ LLM_FALLBACK=gpt-oss:20b
 LLM_TIMEOUT=60
 LLM_MAX_RETRIES=2
 
+# ─── Chat (conversational mode) ───
+CHAT_MODEL=gpt-oss:20b
+CHAT_HISTORY_MAX=20
+
 # ─── Telegram ───
 TELEGRAM_BOT_TOKEN=<token>
 TELEGRAM_WEBHOOK_URL=https://para.mxlabs.cloud/webhook/telegram
@@ -263,7 +267,24 @@ CREATE TABLE settings (
 );
 ```
 
-### 5.6 FTS5 (Full-text search)
+### 5.6 `chat_messages` table
+
+Conversation history for chat mode, persisted per Telegram `chat_id` so it survives
+restarts. Trimmed to the last `CHAT_HISTORY_MAX` messages per chat on every append.
+
+```sql
+CREATE TABLE chat_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER NOT NULL,
+    role TEXT NOT NULL,           -- 'user' | 'assistant'
+    content TEXT NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_chat_messages_chat ON chat_messages(chat_id, id);
+```
+
+### 5.7 FTS5 (Full-text search)
 
 ```sql
 CREATE VIRTUAL TABLE notes_fts USING fts5(
@@ -630,7 +651,10 @@ POST /webhook/telegram
 
 | Command | Example | Action |
 |---------|---------|--------|
-| `/note <text>` | `/note ต้องต่อทะเบียนรถ ก่อน 15 ส.ค.` | Create note |
+| `/ask <question>` | `/ask ควรวางแผนงานนี้ยังไงดี` | Start/continue a chat conversation |
+| `/note <text>` | `/note ต้องต่อทะเบียนรถ ก่อน 15 ส.ค.` | Create note directly from text |
+| `/note` (no text) | `/note` | Distill the current conversation into a note, then reset history |
+| `/reset`, `/clear` | `/reset` | Wipe the conversation history for this chat |
 | `/list` | `/list` | Show all (inline buttons) |
 | `/list <cat>` | `/list projects` | Show by category |
 | `/search <q>` | `/search ทะเบียน` | Search notes |
@@ -641,16 +665,24 @@ POST /webhook/telegram
 | `/digest` | `/digest` | Generate digest now |
 | `/help` | `/help` | Show all commands |
 
-### 9.3 Plain Text (no command)
+### 9.3 Chat Mode (plain text, no command)
 
-If user sends plain text (no command), treat as a new note:
+Plain text (no leading `/`) is a **conversation** with the bot, not an instant note. The
+bot (`app/chat.py`, `CHAT_MODEL` setting) answers using retrieved context from the user's
+PARA notes — an FTS search over `notes_fts` on the message's keywords, plus upcoming
+deadlines and quick stats — and the last `CHAT_HISTORY_MAX` messages of conversation
+history, persisted per `chat_id` in the `chat_messages` table so it survives restarts.
+
 ```
-User: จำไว้ ต้องไปหาหมอฟัน วันที่ 20 ส.ค.
-Bot: ✅ บันทึกแล้ว!
-     📂 Projects · 🔴 High
-     📅 Deadline: 20 ส.ค. 2025
-     🏷️ หมอฟัน, นัดหมอ
+User: มีงานอะไรค้างอยู่บ้างที่ deadline ใกล้ที่สุด
+Bot:  ตอนนี้มีงาน "ต่อทะเบียนรถ" deadline 15 ส.ค. ใกล้ที่สุดครับ...
 ```
+
+To turn a conversation into a note, send `/note` with no text — the chat model distills
+the conversation into a title + content, runs it through the same classify/store pipeline
+as `/note <text>`, and then clears the conversation history so the next chat starts fresh.
+All destructive/mutating actions (archive, move, etc.) remain command-only; chat mode never
+creates or changes notes on its own.
 
 ### 9.4 Notification Messages
 

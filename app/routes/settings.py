@@ -22,6 +22,9 @@ SETTINGS_KEYS: dict[str, type] = {
     "AUTO_ARCHIVE_DAYS": int,
     "RECLASSIFY_INTERVAL_HOURS": int,
     "RECLASSIFY_CONFIDENCE_THRESHOLD": float,
+    "CHAT_MODEL": str,
+    "CHAT_HISTORY_MAX": int,
+    "CHAT_SYSTEM_PROMPT": str,
 }
 
 _DAY_OF_WEEK_RE = re.compile(
@@ -50,7 +53,7 @@ def _validate_setting(key: str, value) -> None:
     elif key == "NOTIFY_DIGEST_TIME":
         if not _DIGEST_TIME_RE.match(str(value)):
             raise HTTPException(status_code=422, detail="NOTIFY_DIGEST_TIME must be in HH:MM format")
-    elif key in ("NOTIFY_STALE_DAYS", "AUTO_ARCHIVE_DAYS", "RECLASSIFY_INTERVAL_HOURS") and value <= 0:
+    elif key in ("NOTIFY_STALE_DAYS", "AUTO_ARCHIVE_DAYS", "RECLASSIFY_INTERVAL_HOURS", "CHAT_HISTORY_MAX") and value <= 0:
         raise HTTPException(status_code=422, detail=f"{key} must be a positive integer")
     elif key == "RECLASSIFY_CONFIDENCE_THRESHOLD" and not 0.0 <= value <= 1.0:
         raise HTTPException(status_code=422, detail="RECLASSIFY_CONFIDENCE_THRESHOLD must be between 0.0 and 1.0")

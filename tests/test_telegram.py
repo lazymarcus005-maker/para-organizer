@@ -7,15 +7,13 @@ from app.integrations.telegram_bot import HELP_TEXT, handle_text, handle_update
 
 
 @pytest.mark.asyncio
-async def test_plain_text_creates_note(test_db, mock_llm):
+async def test_plain_text_routes_to_chat(test_db, mock_chat_llm):
     reply, markup = await handle_text("ต้องต่อทะเบียนรถ", 123, 99)
-    assert "✅ บันทึกแล้ว!" in reply
-    assert "Projects" in reply
+    assert reply == "สวัสดีค่ะ นี่คือคำตอบจำลองจากบอท"
     assert markup is None
     async with get_connection() as db:
-        row = await (await db.execute("SELECT * FROM notes")).fetchone()
-    assert row["source"] == "telegram"
-    assert row["source_metadata"] == '{"chat_id": 123, "message_id": 99}'
+        note_count = (await (await db.execute("SELECT COUNT(*) c FROM notes")).fetchone())["c"]
+    assert note_count == 0
 
 
 @pytest.mark.asyncio
@@ -88,12 +86,12 @@ async def test_stats_and_digest_commands(test_db):
 @pytest.mark.asyncio
 async def test_help_and_invalid_usage(test_db):
     assert (await handle_text("/help", 123))[0] == HELP_TEXT
-    assert "วิธีใช้" in (await handle_text("/note", 123))[0]
+    assert "ยังไม่มีบทสนทนา" in (await handle_text("/note", 123))[0]
     assert "ไม่รู้จัก" in (await handle_text("/wat", 123))[0]
 
 
 @pytest.mark.asyncio
-async def test_update_sends_reply_and_rejects_unknown_user(test_db, mock_llm, sent_messages):
+async def test_update_sends_reply_and_rejects_unknown_user(test_db, mock_chat_llm, sent_messages):
     update = {"message": {"message_id": 4, "text": "hello", "chat": {"id": 123}, "from": {"id": 123}}}
     await handle_update(update)
     assert len(sent_messages) == 1
