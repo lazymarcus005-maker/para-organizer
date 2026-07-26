@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 import aiosqlite
 
 from app.config import settings
+from app.migrations import run_migrations
 
 logger = logging.getLogger("para.database")
 
@@ -162,12 +163,18 @@ async def init_db() -> None:
         await db.execute("PRAGMA foreign_keys=ON;")
         await db.execute("PRAGMA busy_timeout=5000;")
         await db.executescript(SCHEMA_SQL)
-        if await _load_vec_extension(db):
+        vec_loaded = await _load_vec_extension(db)
+        if vec_loaded:
             try:
                 await db.executescript(VEC_SCHEMA_SQL.format(dimensions=settings.EMBED_DIMENSIONS))
             except aiosqlite.Error:
                 logger.warning("Failed to create note_embeddings vector table", exc_info=True)
+        await run_migrations(db)
         await db.commit()
+        logger.info(
+            "init_db complete (sqlite-vec %s)",
+            "loaded" if vec_loaded else "unavailable",
+        )
 
 
 @asynccontextmanager

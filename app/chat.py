@@ -181,7 +181,7 @@ async def chat_reply(chat_id: int, user_text: str) -> str:
     messages.append({"role": "user", "content": user_text})
 
     try:
-        reply = (await call_ollama(settings.CHAT_MODEL, messages=messages, format=None)).strip()
+        reply = (await call_ollama(settings.CHAT_MODEL, messages=messages, format=None, task="chat")).strip()
     except (httpx.TimeoutException, httpx.HTTPError) as e:
         logger.warning("Chat model call failed: %s", e)
         reply = CHAT_FALLBACK_REPLY
@@ -203,7 +203,7 @@ async def distill_note_from_history(chat_id: int) -> str | None:
         + [{"role": "user", "content": "สรุปบทสนทนาข้างต้นเป็นเนื้อหาโน้ตหนึ่งชิ้น"}]
     )
     try:
-        result = await call_ollama(settings.CHAT_MODEL, messages=messages, format=None)
+        result = await call_ollama(settings.CHAT_MODEL, messages=messages, format=None, task="distill")
     except (httpx.TimeoutException, httpx.HTTPError) as e:
         logger.warning("Failed to distill note from chat history for chat %s: %s", chat_id, e)
         return None

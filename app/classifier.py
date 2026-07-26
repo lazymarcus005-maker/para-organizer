@@ -8,6 +8,7 @@ from datetime import date, datetime
 import httpx
 
 from app.config import settings
+from app.usage import log_usage
 
 logger = logging.getLogger("para.classifier")
 
@@ -49,11 +50,17 @@ async def call_ollama(
     prompt: str | None = None,
     format: str | None = "json",
     messages: list[dict] | None = None,
+    task: str = "chat",
+    note_id: int | None = None,
 ) -> str:
     """Call the Ollama Cloud OpenAI-compatible chat completions endpoint.
 
     Pass `prompt` for a single-turn call, or `messages` (a full chat history,
     e.g. system/user/assistant turns) for free-text conversational replies.
+
+    `task` labels the call for usage accounting ('classify', 'chat', 'review',
+    'distill'); token counts from the response are logged automatically via
+    app.usage.log_usage (best-effort, never raises).
     """
     payload = {
         "model": model,
@@ -71,7 +78,9 @@ async def call_ollama(
         )
         resp.raise_for_status()
         data = resp.json()
-        return data["choices"][0]["message"]["content"]
+
+    await log_usage(model, task, data.get("usage"), note_id)
+    return data["choices"][0]["message"]["content"]
 
 
 def _extract_json(text: str) -> dict:
@@ -94,7 +103,7 @@ async def classify_note(title: str, content: str) -> dict:
     for model in [settings.LLM_PRIMARY, settings.LLM_FALLBACK]:
         for attempt in range(settings.LLM_MAX_RETRIES):
             try:
-                raw = await call_ollama(model, prompt, format="json")
+                raw = await call_ollama(model, prompt, format="json", task="classify")
                 result = _extract_json(raw)
 
                 if result["para_category"] not in PARA_CATEGORIES:
