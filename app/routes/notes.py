@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from app.classifier import classify_note, extract_deadline_from_text
 from app.config import settings
 from app.database import get_db
+from app.linker import auto_link_note
 from app.models import NoteCreate, NoteMove, NoteUpdate, PARA_CATEGORIES, PRIORITIES, STATUSES
 from app.utils import row_to_note
 from app.vector_store import delete_note_embedding, index_note
@@ -93,6 +94,13 @@ async def create_note(payload: NoteCreate, db: aiosqlite.Connection = Depends(ge
     except Exception:
         logger.warning("Failed to index embedding for note %s", note_id, exc_info=True)
 
+    try:
+        linked = await auto_link_note(db, note_id)
+        if linked:
+            logger.info("Auto-linked note %s to %s notes", note_id, linked)
+    except Exception:
+        logger.warning("Failed to auto-link note %s", note_id, exc_info=True)
+
     return await _fetch_note(db, note_id)
 
 
@@ -101,6 +109,7 @@ async def list_notes(
     category: str | None = Query(default=None),
     status: str | None = Query(default=None),
     source: str | None = Query(default=None),
+    review: bool | None = Query(default=None),
     limit: int = Query(default=20, le=200),
     offset: int = Query(default=0, ge=0),
     db: aiosqlite.Connection = Depends(get_db),
@@ -116,6 +125,12 @@ async def list_notes(
     if source:
         clauses.append("source = ?")
         params.append(source)
+    if review is not None:
+        # A note "needs review" when it was LLM-classified below the confidence
+        # threshold (see app.utils.row_to_note / classifier._apply_confidence_routing).
+        predicate = "(llm_model IS NOT NULL AND llm_confidence < ?)"
+        clauses.append(predicate if review else f"NOT {predicate}")
+        params.append(settings.RECLASSIFY_CONFIDENCE_THRESHOLD)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
     count_cursor = await db.execute(f"SELECT COUNT(*) AS c FROM notes {where}", params)

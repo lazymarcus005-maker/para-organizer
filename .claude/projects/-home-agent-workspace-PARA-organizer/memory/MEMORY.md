@@ -1,0 +1,1 @@
+- [MCP tools test pre-existing fail](mcp-tools-test-preexisting-fail.md) — test_mcp.py::test_all_ten_tools_registered fails on feature/phase2-codex, not a regression

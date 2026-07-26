@@ -21,9 +21,10 @@ from app.scheduler import (
 from tests.conftest import insert_note
 
 
-def test_scheduler_registers_exactly_six_jobs():
+def test_scheduler_registers_expected_jobs():
     assert {job.id for job in scheduler.get_jobs()} == {
-        "reclassify", "auto_archive", "escalate", "deadline_check", "stale_check", "weekly_digest"
+        "reclassify", "auto_archive", "escalate", "deadline_check", "stale_check",
+        "weekly_digest", "weekly_review",
     }
 
 
