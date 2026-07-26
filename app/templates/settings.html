@@ -66,6 +66,38 @@
         </section>
 
         <section class="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+            <header class="border-b border-slate-200 px-6 py-5">
+                <h2 class="text-base font-semibold">Chat</h2>
+                <p class="mt-1 text-sm text-slate-500">Conversational chat mode: model, history length, and system prompt.</p>
+            </header>
+            <form hx-put="/api/settings" hx-ext="json-enc" hx-swap="none"
+                  hx-on::after-request="if(event.detail.successful){ window.location.reload() }"
+                  class="p-6">
+                <div class="grid grid-cols-1 gap-x-6 gap-y-5 md:grid-cols-2">
+                    <div>
+                        <label for="chat-model" class="mb-2 block text-sm font-medium">Chat model</label>
+                        <input id="chat-model" type="text" name="CHAT_MODEL" value="{{ settings_values.CHAT_MODEL }}"
+                               class="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20">
+                    </div>
+                    <div>
+                        <label for="chat-history-max" class="mb-2 block text-sm font-medium">History length</label>
+                        <input id="chat-history-max" type="number" name="CHAT_HISTORY_MAX" value="{{ settings_values.CHAT_HISTORY_MAX }}"
+                               class="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20">
+                        <p class="mt-1.5 text-xs text-slate-400">Max messages kept per chat before trimming oldest.</p>
+                    </div>
+                    <div class="md:col-span-2">
+                        <label for="chat-system-prompt" class="mb-2 block text-sm font-medium">System prompt</label>
+                        <textarea id="chat-system-prompt" name="CHAT_SYSTEM_PROMPT" rows="4"
+                                  class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20">{{ settings_values.CHAT_SYSTEM_PROMPT }}</textarea>
+                    </div>
+                </div>
+                <div class="mt-6 flex justify-end border-t border-slate-200 pt-6">
+                    <button type="submit" class="inline-flex h-10 items-center justify-center rounded-lg bg-emerald-600 px-4 text-sm font-medium text-white shadow-sm transition hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2">Save settings</button>
+                </div>
+            </form>
+        </section>
+
+        <section class="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
             <header class="flex flex-col gap-3 border-b border-slate-200 px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                     <h2 class="text-base font-semibold">Backups</h2>

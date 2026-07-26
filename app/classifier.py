@@ -44,11 +44,20 @@ DEFAULT_RESULT = {
 }
 
 
-async def call_ollama(model: str, prompt: str, format: str | None = "json") -> str:
-    """Call the Ollama Cloud OpenAI-compatible chat completions endpoint."""
+async def call_ollama(
+    model: str,
+    prompt: str | None = None,
+    format: str | None = "json",
+    messages: list[dict] | None = None,
+) -> str:
+    """Call the Ollama Cloud OpenAI-compatible chat completions endpoint.
+
+    Pass `prompt` for a single-turn call, or `messages` (a full chat history,
+    e.g. system/user/assistant turns) for free-text conversational replies.
+    """
     payload = {
         "model": model,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": messages if messages is not None else [{"role": "user", "content": prompt}],
         "stream": False,
     }
     if format:

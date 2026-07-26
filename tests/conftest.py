@@ -56,6 +56,19 @@ def mock_llm(monkeypatch):
 
 
 @pytest.fixture
+def mock_chat_llm(monkeypatch):
+    calls = []
+
+    async def fake_call_ollama(model, prompt=None, format="json", messages=None):
+        calls.append({"model": model, "prompt": prompt, "format": format, "messages": messages})
+        return "สวัสดีค่ะ นี่คือคำตอบจำลองจากบอท"
+
+    import app.chat as chat
+    monkeypatch.setattr(chat, "call_ollama", fake_call_ollama)
+    return calls
+
+
+@pytest.fixture
 def sent_messages(monkeypatch):
     messages = []
 

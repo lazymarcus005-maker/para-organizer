@@ -15,6 +15,9 @@ _PERSISTED_SETTING_CASTS = {
     "AUTO_ARCHIVE_DAYS": int,
     "RECLASSIFY_INTERVAL_HOURS": int,
     "RECLASSIFY_CONFIDENCE_THRESHOLD": float,
+    "CHAT_MODEL": str,
+    "CHAT_HISTORY_MAX": int,
+    "CHAT_SYSTEM_PROMPT": str,
 }
 
 
@@ -54,6 +57,18 @@ class Settings(BaseSettings):
 
     # ─── Web ───
     WEB_PUBLIC_URL: str = "http://localhost:8731"
+
+    # ─── Chat ───
+    CHAT_MODEL: str = "gpt-oss:20b"
+    CHAT_HISTORY_MAX: int = 20
+    CHAT_SYSTEM_PROMPT: str = (
+        "คุณคือผู้ช่วย second-brain ของระบบ PARA Organizer "
+        "ตอบคำถามโดยอ้างอิงจากโน้ต PARA ของผู้ใช้ (Projects/Areas/Resources/Archives) "
+        "ช่วยระดมความคิดและวางแผนงานได้ ตอบกระชับ ตรงประเด็น เป็นภาษาไทยปนอังกฤษ. "
+        "You are a helpful PARA second-brain assistant. Ground answers in the user's "
+        "PARA notes when relevant, help brainstorm and plan, and keep replies concise, "
+        "in Thai and English."
+    )
 
 
 settings = Settings()

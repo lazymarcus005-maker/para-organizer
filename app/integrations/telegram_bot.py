@@ -10,6 +10,7 @@ from typing import Any
 import aiosqlite
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+from app.chat import chat_reply, clear_history, distill_note_from_history
 from app.classifier import classify_note, extract_deadline_from_text
 from app.config import settings
 from app.database import get_connection
@@ -230,7 +231,14 @@ async def _digest() -> str:
 
 
 HELP_TEXT = """🧠 PARA Organizer
-/note <ข้อความ> — เพิ่มโน้ต
+
+💬 พิมพ์คุยกับบอทได้เลย (ไม่ต้องใส่ / ) — บอทจะตอบโดยอ้างอิงโน้ต PARA ของคุณ
+ช่วยระดมความคิด วางแผน หรือถามอะไรก็ได้
+
+/ask <คำถาม> — เริ่ม/ต่อบทสนทนากับบอท (เหมือนพิมพ์เฉย ๆ)
+/note <ข้อความ> — เพิ่มโน้ตจากข้อความ
+/note (ไม่ใส่ข้อความ) — สรุปบทสนทนาปัจจุบันเป็นโน้ต แล้วเริ่มบทสนทนาใหม่
+/reset, /clear — ล้างประวัติบทสนทนา
 /list [หมวด] — ดูรายการ
 /search <คำค้น> — ค้นหา
 /deadlines — deadline 14 วัน
@@ -241,23 +249,39 @@ HELP_TEXT = """🧠 PARA Organizer
 /help — วิธีใช้"""
 
 
+async def _note_from_conversation(chat_id: int, message_id: int | None) -> str:
+    distilled = await distill_note_from_history(chat_id)
+    if not distilled:
+        return "ยังไม่มีบทสนทนาให้สรุปเป็นโน้ต ลองคุยกับบอทก่อน หรือใช้ /note <ข้อความ>"
+    note = await _create_note(distilled, chat_id, message_id)
+    await clear_history(chat_id)
+    return format_note_created(note)
+
+
 async def handle_text(text: str, chat_id: int, message_id: int | None = None) -> tuple[str, Any | None]:
     """Handle one text message and return reply text plus optional reply markup."""
     text = text.strip()
     if not text:
-        return "ส่งข้อความเพื่อสร้างโน้ต หรือใช้ /help", None
+        return "พิมพ์คุยกับบอท หรือใช้ /help", None
     if not text.startswith("/"):
-        note = await _create_note(text, chat_id, message_id)
-        return format_note_created(note), None
+        return await chat_reply(chat_id, text), None
 
     command_token, _, raw_args = text.partition(" ")
     command = command_token.split("@", 1)[0].lower()
     raw_args = raw_args.strip()
     if command == "/note":
         if not raw_args:
-            return "วิธีใช้: /note <ข้อความ>", None
+            return await _note_from_conversation(chat_id, message_id), None
         note = await _create_note(raw_args, chat_id, message_id)
+        await clear_history(chat_id)
         return format_note_created(note), None
+    if command == "/ask":
+        if not raw_args:
+            return "วิธีใช้: /ask <คำถาม>", None
+        return await chat_reply(chat_id, raw_args), None
+    if command in ("/reset", "/clear"):
+        await clear_history(chat_id)
+        return "🗑️ ล้างประวัติการสนทนาแล้ว เริ่มคุยใหม่ได้เลย", None
     if command == "/list":
         category = raw_args.lower() or None
         if category and category not in PARA_CATEGORIES:
