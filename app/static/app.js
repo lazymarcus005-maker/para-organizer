@@ -131,7 +131,27 @@ async function loadDeadlines() {
     }
 }
 
+/**
+ * Initialize quick-capture keyboard shortcut (Cmd/Ctrl+J)
+ * Available on all pages, opens quick-capture modal or navigates to quick-capture page
+ */
+function initializeQuickCaptureShortcut() {
+    document.addEventListener("keydown", (event) => {
+        const isMac = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+        const isQuickCaptureKey = isMac ? event.metaKey : event.ctrlKey;
+        
+        if (isQuickCaptureKey && event.key === "k") {
+            event.preventDefault();
+            // Navigate to quick-capture page if not already there
+            if (!window.location.pathname.includes("quick-capture")) {
+                window.location.href = "/";
+            }
+        }
+    });
+}
+
 document.addEventListener("DOMContentLoaded", () => {
     initializeNavigation();
     loadDeadlines();
+    initializeQuickCaptureShortcut();
 });

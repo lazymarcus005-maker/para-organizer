@@ -51,11 +51,26 @@ def _note_chat_ids(note: dict) -> list[int]:
 async def notify_deadline(note: dict, days_left: int) -> bool:
     deadline = str(note.get("deadline", ""))
     text = (
-        "⏰ ใกล้ถึงกำหนด!\n\n"
-        f"📋 {note['title']}\n"
-        f"📅 Deadline: {deadline}\n"
-        f"⏰ เหลือ: {days_left} วัน\n"
-        f"🔴 Priority: {str(note.get('priority', 'medium')).title()}\n\n"
+        "⏰ ใกล้ถึงกำหนด!\\n\\n"
+        f"📋 {note['title']}\\n"
+        f"📅 Deadline: {deadline}\\n"
+        f"⏰ เหลือ: {days_left} วัน\\n"
+        f"🔴 Priority: {str(note.get('priority', 'medium')).title()}\\n\\n"
+        f"🔗 ดูรายละเอียด: {settings.WEB_PUBLIC_URL}/notes/{note['id']}"
+    )
+    results = [await send_telegram(chat_id, text) for chat_id in _note_chat_ids(note)]
+    return bool(results) and all(results)
+
+
+async def notify_escalation(note: dict, days_left: int, old_priority: str) -> bool:
+    """Send escalation notification when note priority is auto-bumped."""
+    deadline = str(note.get("deadline", ""))
+    text = (
+        "🚨 Priority bump: Deadline approaching!\\n\\n"
+        f"📋 {note['title']}\\n"
+        f"📅 Deadline: {deadline}\\n"
+        f"⏰ เหลือ: {days_left} วัน\\n"
+        f"📈 Priority: {old_priority.title()} → 🔴 HIGH\\n\\n"
         f"🔗 ดูรายละเอียด: {settings.WEB_PUBLIC_URL}/notes/{note['id']}"
     )
     results = [await send_telegram(chat_id, text) for chat_id in _note_chat_ids(note)]
