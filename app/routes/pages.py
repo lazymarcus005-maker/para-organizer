@@ -95,3 +95,8 @@ async def settings_page(request: Request, db: aiosqlite.Connection = Depends(get
         "settings.html",
         {"settings_values": settings_values, "backups": backups, "api_key": settings.PARA_SECRET_KEY},
     )
+
+
+@router.get("/graph")
+async def graph_page(request: Request):
+    return templates.TemplateResponse(request, "graph.html", {})
