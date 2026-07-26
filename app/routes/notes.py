@@ -262,3 +262,59 @@ async def reclassify_note(note_id: int, db: aiosqlite.Connection = Depends(get_d
     await db.commit()
 
     return await _fetch_note(db, note_id)
+
+
+@router.get("/graph")
+async def get_graph_data(db: aiosqlite.Connection = Depends(get_db)):
+    """Return nodes (notes) and edges (links) for graph visualization.
+    
+    Nodes include: id, label (title), size (priority weight), para_category.
+    Edges include: from_note_id, to_note_id, link_type.
+    """
+    # Fetch all active notes to use as nodes
+    cursor = await db.execute(
+        "SELECT id, title, para_category, priority FROM notes WHERE status != 'archived'",
+    )
+    note_rows = await cursor.fetchall()
+    
+    # Build nodes with priority weighting
+    priority_weights = {"low": 1, "medium": 2, "high": 3, "urgent": 4}
+    nodes = []
+    note_ids = set()
+    for row in note_rows:
+        note_id = row["id"]
+        note_ids.add(note_id)
+        nodes.append({
+            "id": note_id,
+            "label": row["title"],
+            "category": row["para_category"],
+            "size": priority_weights.get(row["priority"], 2) * 10,  # Scale for vis-network
+        })
+    
+    # Fetch all links (edges) - only include if both nodes exist
+    cursor = await db.execute(
+        "SELECT id, from_note_id, to_note_id, link_type FROM links",
+    )
+    link_rows = await cursor.fetchall()
+    
+    edges = []
+    seen_edges = set()
+    for row in link_rows:
+        from_id = row["from_note_id"]
+        to_id = row["to_note_id"]
+        # Only include edges where both notes exist and aren't archived
+        if from_id in note_ids and to_id in note_ids:
+            edge_key = (from_id, to_id)
+            if edge_key not in seen_edges:
+                edges.append({
+                    "from": from_id,
+                    "to": to_id,
+                    "label": row["link_type"],
+                    "link_type": row["link_type"],
+                })
+                seen_edges.add(edge_key)
+    
+    return {
+        "nodes": nodes,
+        "edges": edges,
+    }

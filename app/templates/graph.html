@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block title %}Note Graph - PARA Organizer{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.css" type="text/css" />
+<link rel="stylesheet" href="/static/graph.css">
+{% endblock %}
+
+{% block content %}
+<div class="mb-6 flex items-center justify-between">
+    <h1 class="text-3xl font-bold tracking-tight text-slate-900">Note Network</h1>
+    <div class="flex gap-2">
+        <button id="btn-zoom-in" class="rounded-lg bg-slate-200 px-3 py-2 text-sm font-medium text-slate-900 transition hover:bg-slate-300">
+            Zoom In
+        </button>
+        <button id="btn-zoom-out" class="rounded-lg bg-slate-200 px-3 py-2 text-sm font-medium text-slate-900 transition hover:bg-slate-300">
+            Zoom Out
+        </button>
+        <button id="btn-fit" class="rounded-lg bg-slate-200 px-3 py-2 text-sm font-medium text-slate-900 transition hover:bg-slate-300">
+            Fit to View
+        </button>
+    </div>
+</div>
+
+<div id="graph-container" class="relative mb-6 rounded-lg border border-slate-200 bg-white shadow-sm" style="height: 600px;">
+    <!-- Graph will be rendered here by vis-network -->
+</div>
+
+<!-- Legend -->
+<div class="grid grid-cols-2 gap-4 rounded-lg bg-slate-100 p-4 sm:grid-cols-5">
+    <div class="flex items-center gap-2">
+        <div class="h-4 w-4 rounded-full bg-blue-500"></div>
+        <span class="text-sm text-slate-700">Projects</span>
+    </div>
+    <div class="flex items-center gap-2">
+        <div class="h-4 w-4 rounded-full bg-green-500"></div>
+        <span class="text-sm text-slate-700">Areas</span>
+    </div>
+    <div class="flex items-center gap-2">
+        <div class="h-4 w-4 rounded-full bg-amber-500"></div>
+        <span class="text-sm text-slate-700">Resources</span>
+    </div>
+    <div class="flex items-center gap-2">
+        <div class="h-4 w-4 rounded-full bg-purple-500"></div>
+        <span class="text-sm text-slate-700">Inbox</span>
+    </div>
+    <div class="flex items-center gap-2">
+        <div class="h-4 w-4 rounded-full bg-gray-500"></div>
+        <span class="text-sm text-slate-700">Archives</span>
+    </div>
+</div>
+
+<!-- Node info panel -->
+<div id="node-info" class="mt-6 hidden rounded-lg bg-slate-100 p-4">
+    <div class="text-sm text-slate-600">Click on a node to view details</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.js"></script>
+<script src="/static/graph.js" defer></script>
+{% endblock %}
