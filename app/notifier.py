@@ -128,3 +128,9 @@ async def send_digest(digest_data: dict) -> bool:
     results = [await send_telegram(chat_id, text) for chat_id in notification_chat_ids()]
     return bool(results) and all(results)
 
+
+async def send_review(review_markdown: str) -> bool:
+    """Send the weekly AI review (already-formatted markdown) to all recipients."""
+    results = [await send_telegram(chat_id, review_markdown) for chat_id in notification_chat_ids()]
+    return bool(results) and all(results)
+

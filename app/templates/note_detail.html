@@ -18,6 +18,10 @@
             <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div class="min-w-0">
                     <span class="mb-3 inline-flex rounded-md bg-emerald-50 px-2 py-1 text-xs font-medium capitalize text-emerald-700">{{ note.para_category }}</span>
+                    {% if note.review_needed %}
+                    <span class="mb-3 ml-2 inline-flex rounded-md border border-orange-200 bg-orange-50 px-2 py-1 text-xs font-medium text-orange-700"
+                          title="Low classification confidence — needs manual review">⚠️ needs review</span>
+                    {% endif %}
                     <h1 class="break-words text-2xl font-semibold tracking-tight sm:text-3xl">{{ note.title }}</h1>
                     {% if note.sub_category %}<p class="mt-2 text-sm text-slate-500">{{ note.sub_category }}</p>{% endif %}
                 </div>

@@ -13,7 +13,8 @@ from apscheduler.triggers.cron import CronTrigger
 from app.classifier import classify_note, extract_deadline_from_text
 from app.config import settings
 from app.database import get_connection
-from app.notifier import notify_deadline, notify_stale, send_digest, notify_escalation
+from app.notifier import notify_deadline, notify_stale, send_digest, send_review, notify_escalation
+from app.review import generate_weekly_review
 from app.utils import row_to_note
 
 logger = logging.getLogger("para.scheduler")
@@ -237,6 +238,26 @@ async def send_weekly_digest(now: datetime | None = None) -> bool:
     return success
 
 
+async def send_weekly_review(now: datetime | None = None) -> bool:
+    """Generate the weekly AI review and deliver it to Telegram, recording the
+    outcome as a 'review' notification."""
+    timestamp = now or datetime.now()
+    review = await generate_weekly_review(now)
+    success = await send_review(review)
+    async with get_connection() as db:
+        await db.execute(
+            """INSERT INTO notifications (type, status, scheduled_at, sent_at, payload)
+               VALUES ('review', ?, ?, ?, ?)""",
+            (
+                "sent" if success else "failed", timestamp.isoformat(),
+                timestamp.isoformat() if success else None,
+                json.dumps({"length": len(review)}, ensure_ascii=False),
+            ),
+        )
+        await db.commit()
+    return success
+
+
 async def auto_escalate_urgent_notes(today: date | None = None) -> int:
     """Auto-escalate notes within 3 days of deadline from low/medium to high priority.
     
@@ -375,4 +396,8 @@ scheduler.add_job(
 scheduler.add_job(
     send_weekly_digest, digest_trigger(),
     id="weekly_digest", name="Send weekly digest", replace_existing=True,
+)
+scheduler.add_job(
+    send_weekly_review, CronTrigger(day_of_week="mon", hour=8, minute=0),
+    id="weekly_review", name="Send weekly AI review", replace_existing=True,
 )

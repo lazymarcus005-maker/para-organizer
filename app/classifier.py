@@ -14,6 +14,30 @@ logger = logging.getLogger("para.classifier")
 
 PARA_CATEGORIES = {"projects", "areas", "resources", "archives"}
 
+
+def _apply_confidence_routing(result: dict) -> None:
+    """Force low-confidence classifications back to the inbox for human review.
+
+    When the model's `confidence` is below RECLASSIFY_CONFIDENCE_THRESHOLD we
+    don't trust the predicted category, so we override it to 'inbox', flag the
+    note as needing review, and prepend a machine-readable reason (kept together
+    with the model's own reasoning) so the history log explains the routing.
+    Mutates `result` in place.
+    """
+    try:
+        confidence = float(result.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        confidence = 0.0
+
+    if confidence < settings.RECLASSIFY_CONFIDENCE_THRESHOLD:
+        result["para_category"] = "inbox"
+        result["review_needed"] = True
+        reason = f"low confidence ({confidence:.2f}), needs review"
+        original = result.get("reasoning")
+        result["reasoning"] = f"{reason} — {original}" if original else reason
+    else:
+        result["review_needed"] = False
+
 CLASSIFY_PROMPT = """You are a PARA note classifier. Respond with a JSON object with exactly these keys:
 - para_category: exactly one of "projects", "areas", "resources", "archives"
   - "projects": Active work with a deadline or specific goal
@@ -42,6 +66,7 @@ DEFAULT_RESULT = {
     "confidence": 0.0,
     "llm_model": None,
     "reasoning": "LLM classification failed, placed in inbox",
+    "review_needed": True,
 }
 
 
@@ -117,6 +142,7 @@ async def classify_note(title: str, content: str) -> dict:
                 result.setdefault("deadline", None)
                 result.setdefault("tags", [])
                 result.setdefault("reasoning", "")
+                _apply_confidence_routing(result)
                 return result
             except (json.JSONDecodeError, KeyError, TypeError, ValueError,
                      httpx.TimeoutException, httpx.HTTPError) as e:
