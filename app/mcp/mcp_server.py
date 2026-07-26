@@ -39,6 +39,7 @@ from app.config import settings
 from app.database import get_connection, init_db
 from app.models import PARA_CATEGORIES
 from app.utils import row_to_note
+from app.vector_store import delete_note_embedding
 
 logger = logging.getLogger("para.mcp")
 
@@ -393,6 +394,179 @@ async def para_add_link(from_id: int, to_id: int, link_type: str = "related") ->
         await db.commit()
         row = await (await db.execute("SELECT * FROM links WHERE id = ?", (link_id,))).fetchone()
         return dict(row)
+
+
+@mcp.tool()
+async def para_update(id: int, title: str | None = None, content: str | None = None,
+                      priority: str | None = None, deadline: str | None = None,
+                      tags: list[str] | None = None) -> dict:
+    """Update note fields (any combination).
+
+    Args:
+        id: Note ID
+        title: New title (optional)
+        content: New content (optional)
+        priority: New priority (optional)
+        deadline: New deadline as ISO date string (optional)
+        tags: New tags list (optional)
+
+    Returns:
+        The updated note, or ``{\"error\": ...}`` if not found.
+    """
+    async with get_connection() as db:
+        existing = await _fetch_note(db, id)
+        if existing is None:
+            return {"error": f"Note {id} not found"}
+
+        # Build update statement dynamically
+        updates = []
+        params = []
+        changes = {}
+
+        if title is not None:
+            updates.append("title = ?")
+            params.append(title)
+            changes["title"] = (existing.get("title"), title)
+
+        if content is not None:
+            updates.append("content = ?")
+            params.append(content)
+            changes["content"] = (existing.get("content"), content)
+
+        if priority is not None:
+            updates.append("priority = ?")
+            params.append(priority)
+            changes["priority"] = (existing.get("priority"), priority)
+
+        if deadline is not None:
+            updates.append("deadline = ?")
+            params.append(deadline)
+            changes["deadline"] = (existing.get("deadline"), deadline)
+
+        if tags is not None:
+            tags_json = json.dumps(tags, ensure_ascii=False)
+            updates.append("tags = ?")
+            params.append(tags_json)
+            changes["tags"] = (existing.get("tags"), tags)
+
+        if not updates:
+            # No fields to update
+            return existing
+
+        # Always update updated_at
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        params.append(id)
+
+        sql = f"UPDATE notes SET {', '.join(updates)} WHERE id = ?"
+        await db.execute(sql, params)
+
+        # Log history for each change
+        for field, (old_val, new_val) in changes.items():
+            await _log_history(db, id, "updated", old_value=str(old_val), new_value=str(new_val), reason=field)
+
+        await db.commit()
+        return await _fetch_note(db, id)
+
+
+@mcp.tool()
+async def para_complete(id: int) -> dict:
+    """Mark a note as completed.
+
+    Args:
+        id: Note ID
+
+    Returns:
+        The updated note with status='completed', or ``{\"error\": ...}`` if not found.
+    """
+    async with get_connection() as db:
+        existing = await _fetch_note(db, id)
+        if existing is None:
+            return {"error": f"Note {id} not found"}
+
+        await db.execute(
+            "UPDATE notes SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (id,),
+        )
+        await _log_history(db, id, "completed", new_value="completed")
+        await db.commit()
+        return await _fetch_note(db, id)
+
+
+@mcp.tool()
+async def para_delete(id: int) -> dict:
+    """Soft delete a note (mark archived_at = NOW, don't remove row).
+
+    Also deletes associated embeddings.
+
+    Args:
+        id: Note ID
+
+    Returns:
+        ``{\"deleted\": id}``, or ``{\"error\": ...}`` if not found.
+    """
+    async with get_connection() as db:
+        existing = await _fetch_note(db, id)
+        if existing is None:
+            return {"error": f"Note {id} not found"}
+
+        # Soft delete: mark archived_at
+        await db.execute(
+            "UPDATE notes SET archived_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (id,),
+        )
+        await _log_history(db, id, "deleted")
+
+        # Delete embeddings
+        try:
+            await delete_note_embedding(db, id)
+        except Exception as e:
+            logger.warning("Failed to delete embedding for note %d: %s", id, e)
+
+        await db.commit()
+        return {"deleted": id}
+
+
+@mcp.tool()
+async def para_reclassify(id: int) -> dict:
+    """Fetch note, re-run classifier on title+content, update classification fields.
+
+    Updates para_category, priority, tags, llm_confidence, llm_reasoning.
+
+    Args:
+        id: Note ID
+
+    Returns:
+        The updated note with new classification, or ``{\"error\": ...}`` if not found.
+    """
+    async with get_connection() as db:
+        existing = await _fetch_note(db, id)
+        if existing is None:
+            return {"error": f"Note {id} not found"}
+
+        # Re-classify
+        result = await classify_note(existing["title"], existing["content"])
+        para_category = result.get("para_category", "inbox")
+        sub_category = result.get("sub_category")
+        priority = result.get("priority", "medium")
+        deadline = result.get("deadline")
+        tags = result.get("tags", [])
+        llm_model = result.get("llm_model")
+        llm_confidence = float(result.get("confidence", 0.0))
+        llm_reasoning = result.get("reasoning")
+
+        # Update note with new classification
+        await db.execute(
+            """UPDATE notes SET para_category = ?, sub_category = ?, priority = ?,
+               deadline = ?, tags = ?, llm_model = ?, llm_confidence = ?, llm_reasoning = ?,
+               updated_at = CURRENT_TIMESTAMP WHERE id = ?""",
+            (para_category, sub_category, priority, deadline, json.dumps(tags, ensure_ascii=False),
+             llm_model, llm_confidence, llm_reasoning, id),
+        )
+
+        # Log the reclassification
+        await _log_history(db, id, "reclassified", new_value=para_category, reason=llm_reasoning)
+        await db.commit()
+        return await _fetch_note(db, id)
 
 
 def main() -> None:

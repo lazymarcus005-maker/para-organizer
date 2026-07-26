@@ -13,7 +13,7 @@ from apscheduler.triggers.cron import CronTrigger
 from app.classifier import classify_note, extract_deadline_from_text
 from app.config import settings
 from app.database import get_connection
-from app.notifier import notify_deadline, notify_stale, send_digest
+from app.notifier import notify_deadline, notify_stale, send_digest, notify_escalation
 from app.utils import row_to_note
 
 logger = logging.getLogger("para.scheduler")
@@ -237,6 +237,80 @@ async def send_weekly_digest(now: datetime | None = None) -> bool:
     return success
 
 
+async def auto_escalate_urgent_notes(today: date | None = None) -> int:
+    """Auto-escalate notes within 3 days of deadline from low/medium to high priority.
+    
+    Daily job that finds active notes where:
+    - deadline <= today + 3 days
+    - priority in ('low', 'medium')
+    
+    Escalates them to 'high' priority and sends notification.
+    """
+    today = today or date.today()
+    deadline_cutoff = (today + timedelta(days=3)).isoformat()
+    escalated = 0
+    async with get_connection() as db:
+        rows = await (await db.execute(
+            """SELECT * FROM notes
+               WHERE status='active' AND priority IN ('low', 'medium')
+               AND deadline IS NOT NULL AND deadline <= ?
+               ORDER BY deadline ASC""",
+            (deadline_cutoff,),
+        )).fetchall()
+        for row in rows:
+            note = row_to_note(row)
+            try:
+                # Calculate days remaining
+                deadline_date = date.fromisoformat(str(note["deadline"])[:10])
+                days_left = (deadline_date - today).days
+                
+                # Skip if deadline is in the past
+                if days_left < 0:
+                    continue
+                
+                old_priority = note["priority"]
+                timestamp_str = datetime.now().isoformat(sep=" ")
+                
+                # Update priority to high
+                await db.execute(
+                    """UPDATE notes SET priority='high', updated_at=? WHERE id=?""",
+                    (timestamp_str, note["id"]),
+                )
+                
+                # Log history
+                await db.execute(
+                    """INSERT INTO history (note_id, action, old_value, new_value, reason)
+                       VALUES (?, 'escalated', ?, 'high', ?)""",
+                    (note["id"], old_priority, f"deadline in {days_left} days"),
+                )
+                
+                # Send notification
+                success = await notify_escalation(note, days_left, old_priority)
+                
+                # Log notification
+                payload = json.dumps({
+                    "old_priority": old_priority,
+                    "days_left": days_left,
+                }, ensure_ascii=False)
+                await db.execute(
+                    """INSERT INTO notifications
+                       (note_id, type, status, scheduled_at, sent_at, payload)
+                       VALUES (?, 'escalation', ?, ?, ?, ?)""",
+                    (
+                        note["id"], "sent" if success else "failed",
+                        datetime.now().isoformat(),
+                        datetime.now().isoformat() if success else None,
+                        payload,
+                    ),
+                )
+                escalated += 1
+            except Exception:
+                logger.exception("Failed to escalate note %s, skipping", note["id"])
+                continue
+        await db.commit()
+    return escalated
+
+
 def _log_job_error(event) -> None:
     """Log a scheduled job failure without affecting other jobs' schedules."""
     logger.error("Scheduled job %r failed: %s", event.job_id, event.exception)
@@ -285,6 +359,10 @@ scheduler.add_job(
 scheduler.add_job(
     auto_archive_completed, CronTrigger(hour=2, minute=0),
     id="auto_archive", name="Auto-archive completed notes", replace_existing=True,
+)
+scheduler.add_job(
+    auto_escalate_urgent_notes, CronTrigger(hour=7, minute=0),
+    id="escalate", name="Auto-escalate notes near deadline", replace_existing=True,
 )
 scheduler.add_job(
     check_deadlines_and_notify, CronTrigger(hour=9, minute=0),

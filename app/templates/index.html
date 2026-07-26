@@ -1,15 +1,51 @@
 {% extends "base.html" %}
-{% block title %}Board · PARA Organizer{% endblock %}
+{% block title %}Quick Capture · PARA Organizer{% endblock %}
 {% block content %}
-<div class="mb-6 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-    <div>
-        <p class="mb-1 text-sm font-medium text-emerald-600">Workspace</p>
-        <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">PARA Board</h1>
-        <p class="mt-1 text-sm text-slate-500">Organize what matters, from active projects to reference material.</p>
+<div class="flex min-h-full flex-col items-center justify-center">
+    <div class="w-full max-w-2xl px-4">
+        <!-- Header -->
+        <div class="mb-8 text-center">
+            <h1 class="text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">What's on your mind?</h1>
+            <p class="mt-2 text-base text-slate-500">Capture quickly, organize smartly. Press <kbd class="rounded bg-slate-100 px-2 py-1 text-sm font-semibold text-slate-700">Cmd</kbd> + <kbd class="rounded bg-slate-100 px-2 py-1 text-sm font-semibold text-slate-700">Enter</kbd> to save.</p>
+        </div>
+
+        <!-- Quick Capture Form -->
+        <div class="rounded-lg border border-slate-200 bg-white shadow-md">
+            <form id="quick-capture-form" class="p-6 sm:p-8">
+                <div class="mb-4">
+                    <textarea
+                        id="note-input"
+                        name="content"
+                        placeholder="What's on your mind?"
+                        class="w-full resize-none rounded-lg border border-slate-300 px-4 py-3 text-base font-normal text-slate-900 placeholder:text-slate-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                        rows="6"
+                        autocomplete="off"
+                        spellcheck="true"
+                    ></textarea>
+                </div>
+                <div class="flex gap-3">
+                    <button
+                        type="submit"
+                        class="inline-flex h-10 items-center justify-center rounded-lg bg-emerald-500 px-6 text-sm font-medium text-white transition hover:bg-emerald-600 active:bg-emerald-700"
+                    >
+                        Capture
+                    </button>
+                    <span class="flex items-center text-xs text-slate-400">or press Cmd/Ctrl+Enter</span>
+                </div>
+            </form>
+        </div>
+
+        <!-- Success Toast -->
+        <div id="toast" class="fixed bottom-4 right-4 hidden gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800 shadow-lg">
+            <span>✅ Saved to inbox</span>
+        </div>
+
+        <!-- Error Toast -->
+        <div id="error-toast" class="fixed bottom-4 right-4 hidden gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-800 shadow-lg">
+            <span id="error-message">Error saving note</span>
+        </div>
     </div>
-    <a href="/new" class="inline-flex h-9 items-center justify-center self-start rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium shadow-sm transition hover:bg-slate-50 sm:self-auto">+ Add note</a>
 </div>
-<div id="board" hx-get="/partials/board" hx-trigger="refresh from:body" hx-swap="innerHTML">
-    {% include "_board.html" %}
-</div>
+
+<script src="/static/quick-capture.js" defer></script>
 {% endblock %}
