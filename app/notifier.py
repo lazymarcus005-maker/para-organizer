@@ -7,7 +7,7 @@ import logging
 from datetime import date, timedelta
 from typing import Any
 
-from telegram import Bot
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.config import settings
 
@@ -51,11 +51,11 @@ def _note_chat_ids(note: dict) -> list[int]:
 async def notify_deadline(note: dict, days_left: int) -> bool:
     deadline = str(note.get("deadline", ""))
     text = (
-        "⏰ ใกล้ถึงกำหนด!\\n\\n"
-        f"📋 {note['title']}\\n"
-        f"📅 Deadline: {deadline}\\n"
-        f"⏰ เหลือ: {days_left} วัน\\n"
-        f"🔴 Priority: {str(note.get('priority', 'medium')).title()}\\n\\n"
+        "⏰ ใกล้ถึงกำหนด!\n\n"
+        f"📋 {note['title']}\n"
+        f"📅 Deadline: {deadline}\n"
+        f"⏰ เหลือ: {days_left} วัน\n"
+        f"🔴 Priority: {str(note.get('priority', 'medium')).title()}\n\n"
         f"🔗 ดูรายละเอียด: {settings.WEB_PUBLIC_URL}/notes/{note['id']}"
     )
     results = [await send_telegram(chat_id, text) for chat_id in _note_chat_ids(note)]
@@ -66,11 +66,11 @@ async def notify_escalation(note: dict, days_left: int, old_priority: str) -> bo
     """Send escalation notification when note priority is auto-bumped."""
     deadline = str(note.get("deadline", ""))
     text = (
-        "🚨 Priority bump: Deadline approaching!\\n\\n"
-        f"📋 {note['title']}\\n"
-        f"📅 Deadline: {deadline}\\n"
-        f"⏰ เหลือ: {days_left} วัน\\n"
-        f"📈 Priority: {old_priority.title()} → 🔴 HIGH\\n\\n"
+        "🚨 Priority bump: Deadline approaching!\n\n"
+        f"📋 {note['title']}\n"
+        f"📅 Deadline: {deadline}\n"
+        f"⏰ เหลือ: {days_left} วัน\n"
+        f"📈 Priority: {old_priority.title()} → 🔴 HIGH\n\n"
         f"🔗 ดูรายละเอียด: {settings.WEB_PUBLIC_URL}/notes/{note['id']}"
     )
     results = [await send_telegram(chat_id, text) for chat_id in _note_chat_ids(note)]
@@ -78,13 +78,28 @@ async def notify_escalation(note: dict, days_left: int, old_priority: str) -> bo
 
 
 async def notify_stale(note: dict) -> bool:
+    """Send stale project notification with Keep/Archive buttons.
+    
+    Uses inline keyboard with callback buttons to handle user responses.
+    """
     text = (
-        "⚠️ โปรเจกต์ไม่มีความเคลื่อนไหว\n\n"
-        f"📋 {note['title']}\n"
-        f"ไม่ได้อัปเดตมากกว่า {settings.NOTIFY_STALE_DAYS} วัน\n"
-        f"🔗 ดูรายละเอียด: {settings.WEB_PUBLIC_URL}/notes/{note['id']}"
+        f"🤔 {note['title']} still going?\n\n"
+        f"⚠️ Not updated for {settings.NOTIFY_STALE_DAYS}+ days\n"
+        f"🔗 Details: {settings.WEB_PUBLIC_URL}/notes/{note['id']}"
     )
-    results = [await send_telegram(chat_id, text) for chat_id in _note_chat_ids(note)]
+    
+    # Create Keep/Archive buttons
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Keep", callback_data=f"stale:keep:{note['id']}"),
+            InlineKeyboardButton("📦 Archive", callback_data=f"stale:archive:{note['id']}"),
+        ]
+    ])
+    
+    results = [
+        await send_telegram(chat_id, text, reply_markup=keyboard)
+        for chat_id in _note_chat_ids(note)
+    ]
     return bool(results) and all(results)
 
 
@@ -133,4 +148,3 @@ async def send_review(review_markdown: str) -> bool:
     """Send the weekly AI review (already-formatted markdown) to all recipients."""
     results = [await send_telegram(chat_id, review_markdown) for chat_id in notification_chat_ids()]
     return bool(results) and all(results)
-

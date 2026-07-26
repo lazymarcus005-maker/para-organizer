@@ -84,7 +84,7 @@ async def test_all_ten_tools_registered(db):
     tools = await mcp.list_tools()
     names = {t.name for t in tools}
     assert names == ALL_TOOLS
-    assert len(tools) == 10
+    assert len(tools) == 15  # Now 15 tools: 10 original + para_update, para_complete, para_delete, para_reclassify, para_ask
 
 
 @pytest.mark.asyncio
