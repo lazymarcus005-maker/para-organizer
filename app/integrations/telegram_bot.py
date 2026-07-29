@@ -428,6 +428,23 @@ async def _handle_update(update: dict) -> None:
                         await db.commit()
                 except (ValueError, IndexError):
                     await send_telegram(chat_id, "❌ Invalid note ID")
+        elif data.startswith("autonomy:"):
+            parts = data.split(":")
+            if len(parts) >= 3:
+                action = parts[1]
+                note_id_str = parts[2]
+                note_id = int(note_id_str) if note_id_str != "none" else None
+                if action == "approve" and len(parts) == 4:
+                    task_type = parts[3]
+                    prompt = callback.get("message", {}).get("text", "")
+                    from app.autonomy import handle_autonomy_approval
+                    result = await handle_autonomy_approval(note_id, prompt, task_type, approved=True)
+                    if result:
+                        await send_telegram(chat_id, f"✅ สร้างงาน #{result['id']} แล้ว")
+                    else:
+                        await send_telegram(chat_id, "❌ ไม่สามารถสร้างงานได้")
+                elif action == "reject":
+                    await send_telegram(chat_id, "❌ ยกเลิกแล้ว")
         elif data.startswith("deadline:"):
             parts = data.split(":")
             if len(parts) == 4:

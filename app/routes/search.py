@@ -1,14 +1,16 @@
-"""/api/search — FTS5 full-text search."""
+"""/api/search — FTS5 full-text search, plus /api/context injection (SB-03)."""
 
 import html
 
 import aiosqlite
 from fastapi import APIRouter, Depends, Query
 
+from app.context import build_context
 from app.database import get_db
 from app.utils import row_to_note
 
 router = APIRouter(prefix="/api/search", tags=["search"])
+context_router = APIRouter(prefix="/api", tags=["context"])
 
 # Delimiters passed to SQLite's snippet() that are then HTML-escaped along with
 # the rest of the snippet before being swapped for real <mark> tags — this keeps
@@ -99,3 +101,11 @@ async def search_suggest(
     rows = await cursor.fetchall()
 
     return {"suggestions": [dict(r) for r in rows]}
+
+
+@context_router.get("/context")
+async def get_context(
+    topic: str = Query(default=""),
+    limit: int = Query(default=5, le=20),
+):
+    return await build_context(topic, limit)

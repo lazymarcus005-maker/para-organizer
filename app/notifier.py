@@ -156,3 +156,22 @@ async def send_review(review_markdown: str) -> bool:
     """Send the weekly AI review (already-formatted markdown) to all recipients."""
     results = [await send_telegram(chat_id, review_markdown) for chat_id in notification_chat_ids()]
     return bool(results) and all(results)
+
+
+async def notify_task_proposal(proposal: dict) -> bool:
+    note_id = proposal.get("note_id")
+    note_id_str = str(note_id) if note_id is not None else "none"
+    text = (
+        "🤖 PARA เสนองาน:\n\n"
+        f"{proposal['prompt']}\n\n"
+        f"เหตุผล: {proposal['reason']}\n"
+        f"Confidence: {proposal['confidence']:.0%}"
+    )
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Approve", callback_data=f"autonomy:approve:{note_id_str}:{proposal['task_type']}"),
+            InlineKeyboardButton("❌ Reject", callback_data=f"autonomy:reject:{note_id_str}"),
+        ]
+    ])
+    results = [await send_telegram(chat_id, text, reply_markup=keyboard) for chat_id in notification_chat_ids()]
+    return bool(results) and all(results)

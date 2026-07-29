@@ -37,9 +37,16 @@ from mcp.server.fastmcp import FastMCP
 from app import classifier
 from app.classifier import classify_note, extract_deadline_from_text
 from app.config import settings
+from app.context import build_context
 from app.database import get_connection, init_db
 from app.distill import distill_note
+from app.events import emit_event
+from app.feedback import get_feedback_stats
+from app.graph import get_related, get_subgraph
+from app.items import compute_progress, create_item, list_items, sync_note_progress, update_item
 from app.models import PARA_CATEGORIES
+from app.planner import generate_plan
+from app.tasks import complete_task, create_task, list_tasks
 from app.utils import row_to_note, spawn_recurring_instance
 from app.vector_store import delete_note_embedding
 
@@ -246,6 +253,16 @@ async def para_archive(id: int) -> dict:
             await _log_history(db, id, "distilled", new_value=summary)
 
         await db.commit()
+
+        try:
+            await emit_event(db, "note.completed", id, {
+                "title": existing["title"],
+                "para_category": "archives",
+                "status": "archived",
+            })
+        except Exception:
+            logger.warning("Failed to emit note.completed for note %d", id, exc_info=True)
+
         return await _fetch_note(db, id)
 
 
@@ -502,6 +519,15 @@ async def para_complete(id: int) -> dict:
         next_id = await spawn_recurring_instance(db, existing)
 
         await db.commit()
+
+        try:
+            await emit_event(db, "note.completed", id, {
+                "title": existing["title"],
+                "status": "completed",
+            })
+        except Exception:
+            logger.warning("Failed to emit note.completed for note %d", id, exc_info=True)
+
         result = await _fetch_note(db, id)
         if next_id is not None:
             result["next_instance_id"] = next_id
@@ -648,6 +674,288 @@ async def para_ask(question: str) -> dict:
         ]
 
         return {"answer": answer, "sources": sources}
+
+
+@mcp.tool()
+async def para_context(topic: str, limit: int = 5) -> dict:
+    """Build a situational context package for an agent about to work on a topic.
+
+    Returns related notes (hybrid search), upcoming deadlines, pending tasks,
+    recent activity, graph neighbors, and quick stats — everything an agent
+    needs to understand the current state of the brain before acting.
+
+    Args:
+        topic: What the agent is about to work on
+        limit: Max items per section (default 5)
+
+    Returns:
+        Context package dict with related_notes, upcoming_deadlines,
+        pending_tasks, recent_activity, graph_neighbors, quick_stats.
+    """
+    return await build_context(topic, limit)
+
+
+@mcp.tool()
+async def para_create_task(note_id: int | None = None, prompt: str = "",
+                           task_type: str = "general") -> dict:
+    """Create a task to be delegated to Hermes (or another agent).
+
+    Args:
+        note_id: Optional source note ID the task relates to
+        prompt: What the agent should do
+        task_type: general | research | code | deploy | review | automation
+
+    Returns:
+        The created task dict, or ``{"error": ...}`` on invalid input.
+    """
+    if not prompt or not prompt.strip():
+        return {"error": "prompt is required"}
+    async with get_connection() as db:
+        if note_id is not None and await _fetch_note(db, note_id) is None:
+            return {"error": f"Note {note_id} not found"}
+        return await create_task(db, note_id, prompt.strip(), task_type)
+
+
+@mcp.tool()
+async def para_task_result(task_id: int, result: str) -> dict:
+    """Report the result of a completed task back to PARA.
+
+    Marks the task as completed and automatically creates a new note from
+    the result (auto-classified by the LLM), closing the delegation loop.
+
+    Args:
+        task_id: Task ID
+        result: What the agent accomplished / found
+
+    Returns:
+        The updated task dict, or ``{"error": ...}`` if not found.
+    """
+    async with get_connection() as db:
+        task = await complete_task(db, task_id, result)
+        if task is None:
+            return {"error": f"Task {task_id} not found"}
+        return task
+
+
+@mcp.tool()
+async def para_tasks(status: str | None = None, limit: int = 20) -> dict:
+    """List delegated tasks, optionally filtered by status.
+
+    Args:
+        status: Optional filter (pending | dispatched | completed | failed)
+        limit: Max results (default 20)
+
+    Returns:
+        {"tasks": [...], "total": int}
+    """
+    async with get_connection() as db:
+        tasks, total = await list_tasks(db, status=status, limit=limit)
+        return {"tasks": tasks, "total": total}
+
+
+@mcp.tool()
+async def para_brain_state() -> dict:
+    """Snapshot of the entire brain state — a single call giving Hermes the
+    full picture: stats, active projects, deadlines, pending tasks, inbox
+    items awaiting review, stale items, and recent events.
+
+    Returns:
+        Brain state dict combining stats, deadlines, tasks, inbox, stale,
+        and recent events.
+    """
+    stale_days = int(settings.NOTIFY_STALE_DAYS)
+    async with get_connection() as db:
+        total = (await (await db.execute("SELECT COUNT(*) c FROM notes")).fetchone())["c"]
+        cat_rows = await (await db.execute(
+            "SELECT para_category, COUNT(*) c FROM notes GROUP BY para_category"
+        )).fetchall()
+        by_category = {r["para_category"]: r["c"] for r in cat_rows}
+
+        status_rows = await (await db.execute(
+            "SELECT status, COUNT(*) c FROM notes GROUP BY status"
+        )).fetchall()
+        by_status = {r["status"]: r["c"] for r in status_rows}
+
+        deadlines_rows = await (await db.execute(
+            """SELECT id, title, deadline, priority FROM notes
+               WHERE deadline IS NOT NULL AND status = 'active'
+                 AND deadline >= date('now') AND deadline <= date('now', '+14 days')
+               ORDER BY deadline ASC"""
+        )).fetchall()
+        deadlines = [
+            {"id": r["id"], "title": r["title"], "deadline": r["deadline"],
+             "days_left": (date.fromisoformat(str(r["deadline"])[:10]) - date.today()).days,
+             "priority": r["priority"]}
+            for r in deadlines_rows
+        ]
+
+        inbox_rows = await (await db.execute(
+            """SELECT id, title, llm_confidence FROM notes
+               WHERE para_category = 'inbox' AND status = 'active'
+               ORDER BY created_at DESC LIMIT 10"""
+        )).fetchall()
+        inbox = [dict(r) for r in inbox_rows]
+
+        stale_rows = await (await db.execute(
+            f"""SELECT id, title, updated_at FROM notes
+                WHERE para_category = 'projects' AND status = 'active'
+                  AND updated_at < datetime('now', '-{stale_days} days')
+                ORDER BY updated_at ASC"""
+        )).fetchall()
+        stale = [dict(r) for r in stale_rows]
+
+        try:
+            task_rows = await (await db.execute(
+                """SELECT id, prompt, status, task_type FROM tasks
+                   WHERE status IN ('pending', 'dispatched')
+                   ORDER BY created_at DESC LIMIT 10"""
+            )).fetchall()
+            pending_tasks = [dict(r) for r in task_rows]
+        except Exception:
+            pending_tasks = []
+
+        try:
+            event_rows = await (await db.execute(
+                """SELECT id, event_type, note_id, status, created_at FROM events
+                   ORDER BY created_at DESC LIMIT 10"""
+            )).fetchall()
+            recent_events = [dict(r) for r in event_rows]
+        except Exception:
+            recent_events = []
+
+    return {
+        "stats": {
+            "total_notes": total,
+            "by_category": by_category,
+            "by_status": by_status,
+        },
+        "upcoming_deadlines": deadlines,
+        "inbox_awaiting_review": inbox,
+        "stale_projects": stale,
+        "pending_tasks": pending_tasks,
+        "recent_events": recent_events,
+    }
+
+
+@mcp.tool()
+async def para_graph_context(note_id: int, depth: int = 2) -> dict:
+    """Get the knowledge subgraph around a note — all connected notes up to N hops.
+
+    Args:
+        note_id: Center note ID
+        depth: How many hops to traverse (default 2)
+
+    Returns:
+        Subgraph with nodes, edges, and counts, or ``{"error": ...}`` if not found.
+    """
+    async with get_connection() as db:
+        if await _fetch_note(db, note_id) is None:
+            return {"error": f"Note {note_id} not found"}
+    return await get_subgraph(note_id, depth)
+
+
+@mcp.tool()
+async def para_related(note_id: int, limit: int = 10) -> list:
+    """Find notes related to a given note — via explicit links and semantic similarity.
+
+    Args:
+        note_id: Note ID
+        limit: Max results (default 10)
+
+    Returns:
+        List of related notes with relation type, or ``{"error": ...}`` if not found.
+    """
+    async with get_connection() as db:
+        if await _fetch_note(db, note_id) is None:
+            return {"error": f"Note {note_id} not found"}
+    return await get_related(note_id, limit)
+
+
+@mcp.tool()
+async def para_items(note_id: int) -> dict:
+    """List action items (subtasks) for a note, with progress percentage.
+
+    Args:
+        note_id: Note ID
+
+    Returns:
+        {"items": [...], "progress": float|null, "total": int, "done": int}
+    """
+    async with get_connection() as db:
+        if await _fetch_note(db, note_id) is None:
+            return {"error": f"Note {note_id} not found"}
+        items = await list_items(db, note_id)
+        progress = await compute_progress(db, note_id)
+    done = sum(1 for i in items if i["status"] == "done")
+    return {"items": items, "progress": progress, "total": len(items), "done": done}
+
+
+@mcp.tool()
+async def para_add_item(note_id: int, content: str) -> dict:
+    """Add an action item (subtask) to a note.
+
+    Args:
+        note_id: Note ID
+        content: What needs to be done
+
+    Returns:
+        The created item, or ``{"error": ...}`` if note not found.
+    """
+    if not content or not content.strip():
+        return {"error": "content is required"}
+    async with get_connection() as db:
+        if await _fetch_note(db, note_id) is None:
+            return {"error": f"Note {note_id} not found"}
+        item = await create_item(db, note_id, content.strip())
+        await sync_note_progress(db, note_id)
+        await db.commit()
+    return item
+
+
+@mcp.tool()
+async def para_done_item(item_id: int) -> dict:
+    """Mark an action item as done.
+
+    Args:
+        item_id: Action item ID
+
+    Returns:
+        The updated item, or ``{"error": ...}`` if not found.
+    """
+    async with get_connection() as db:
+        item = await update_item(db, item_id, status="done")
+        if item is None:
+            return {"error": f"Item {item_id} not found"}
+        await sync_note_progress(db, item["note_id"])
+        await db.commit()
+    return item
+
+
+@mcp.tool()
+async def para_plan(horizon_days: int = 7) -> dict:
+    """Generate a suggested plan for the next N days — prioritized actions,
+    stale items to revisit, and a focus recommendation.
+
+    Args:
+        horizon_days: Planning horizon in days (default 7)
+
+    Returns:
+        Plan dict with prioritized_actions, stale_to_revisit, suggested_focus.
+    """
+    return await generate_plan(horizon_days)
+
+
+@mcp.tool()
+async def para_feedback_stats(days: int = 30) -> dict:
+    """Classification feedback analytics — accuracy, common corrections, suggestions.
+
+    Args:
+        days: Look-back period (default 30)
+
+    Returns:
+        Feedback stats with accuracy_by_category, common_corrections, suggestions.
+    """
+    return await get_feedback_stats(days)
 
 
 def main() -> None:

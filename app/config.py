@@ -105,6 +105,20 @@ class Settings(BaseSettings):
     BACKUP_CLOUD_SECRET_KEY: str = ""
     BACKUP_CLOUD_RETENTION_DAYS: int = 30
 
+    # ─── Second Brain: Event Bus (SB-01) ───
+    EVENT_WEBHOOK_URL: str = ""
+    EVENT_WEBHOOK_SECRET: str = ""
+    EVENT_TYPES_ENABLED: str = "note.created,note.classified,note.deadline_approaching,note.stale,note.completed,note.low_confidence,review.generated"
+    EVENT_DISPATCH_RETRIES: int = 3
+
+    # ─── Second Brain: Task Delegation (SB-02) ───
+    TASK_AUTO_EXTRACT: bool = True
+    TASK_ACTION_VERBS: str = "ช่วย,เช็ค,รัน,สร้าง,ทดสอบ,deploy,ตรวจสอบ,อัพเดท,อัปเดต,ส่ง,ดาวน์โหลด,ติดตั้ง"
+
+    # ─── Second Brain: Autonomous Task Generation (SB-09) ───
+    AUTONOMY_LEVEL: str = "suggest_only"
+    AUTONOMY_DAILY_HOUR: int = 6
+
 
 settings = Settings()
 

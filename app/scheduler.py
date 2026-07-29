@@ -14,6 +14,8 @@ from app.classifier import classify_note, extract_deadline_from_text
 from app.config import settings
 from app.database import get_connection
 from app.embed import embed_text
+from app.events import emit_event
+from app.autonomy import generate_autonomous_tasks
 from app.notifier import notify_deadline, notify_stale, send_digest, send_review, notify_escalation
 from app.review import generate_weekly_review
 from app.utils import row_to_note
@@ -140,6 +142,10 @@ async def check_deadlines_and_notify(today: date | None = None) -> int:
                         (note["id"], str(days_left)),
                     )
                     sent += 1
+                    await emit_event(db, "note.deadline_approaching", note["id"], {
+                        "days_left": days_left,
+                        "deadline": str(note["deadline"]),
+                    })
             except Exception:
                 logger.exception("Failed to process deadline notification for note %s", note["id"])
                 continue
@@ -179,6 +185,10 @@ async def check_stale_projects(now: datetime | None = None) -> int:
                     ),
                 )
                 sent += int(success)
+                if success:
+                    await emit_event(db, "note.stale", note["id"], {
+                        "updated_at": str(note["updated_at"]),
+                    })
             except Exception:
                 logger.exception("Failed to process stale notification for note %s", note["id"])
                 continue
@@ -257,6 +267,11 @@ async def send_weekly_review(now: datetime | None = None) -> bool:
             ),
         )
         await db.commit()
+        if success:
+            try:
+                await emit_event(db, "review.generated", None, {"length": len(review)})
+            except Exception:
+                logger.exception("Failed to emit review.generated")
     return success
 
 
@@ -437,4 +452,8 @@ scheduler.add_job(
 scheduler.add_job(
     backfill_embeddings, CronTrigger(minute="*/15"),
     id="embed_backfill", name="Backfill pending embeddings", replace_existing=True,
+)
+scheduler.add_job(
+    generate_autonomous_tasks, CronTrigger(hour=settings.AUTONOMY_DAILY_HOUR, minute=0),
+    id="autonomous_tasks", name="Generate autonomous task proposals", replace_existing=True,
 )

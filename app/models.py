@@ -107,9 +107,39 @@ class Stats(BaseModel):
     avg_confidence: float
 
 
+class TaskCreate(BaseModel):
+    note_id: Optional[int] = None
+    prompt: str = Field(min_length=1)
+    task_type: str = "general"
+    agent_id: Optional[str] = None
+
+
+class TaskComplete(BaseModel):
+    result: str = Field(min_length=1)
+
+
+class TaskFail(BaseModel):
+    reason: str = Field(min_length=1)
+
+
 class Deadline(BaseModel):
     id: int
     title: str
     deadline: date
     days_left: int
     priority: str
+
+
+class FeedbackCreate(BaseModel):
+    note_id: int
+    field: str
+    user_value: str
+
+
+class ItemCreate(BaseModel):
+    content: str = Field(min_length=1)
+
+
+class ItemUpdate(BaseModel):
+    content: Optional[str] = None
+    status: Optional[str] = None
