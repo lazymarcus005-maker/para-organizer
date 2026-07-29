@@ -40,6 +40,14 @@
                                class="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20">
                     </div>
                     <div>
+                        <label for="notify-channel" class="mb-2 block text-sm font-medium">Notification channel</label>
+                        <select id="notify-channel" name="NOTIFY_CHANNEL"
+                                class="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20">
+                            <option value="telegram" {% if settings_values.NOTIFY_CHANNEL == 'telegram' %}selected{% endif %}>Telegram</option>
+                            <option value="none" {% if settings_values.NOTIFY_CHANNEL == 'none' %}selected{% endif %}>None</option>
+                        </select>
+                    </div>
+                    <div>
                         <label for="archive-days" class="mb-2 block text-sm font-medium">Auto-archive days</label>
                         <input id="archive-days" type="number" name="AUTO_ARCHIVE_DAYS" value="{{ settings_values.AUTO_ARCHIVE_DAYS }}"
                                class="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20">
@@ -57,6 +65,45 @@
                         <input id="confidence" type="number" step="0.05" min="0" max="1" name="RECLASSIFY_CONFIDENCE_THRESHOLD"
                                value="{{ settings_values.RECLASSIFY_CONFIDENCE_THRESHOLD }}"
                                class="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 md:max-w-[calc(50%-0.75rem)]">
+                    </div>
+                </div>
+                <div class="mt-6 flex justify-end border-t border-slate-200 pt-6">
+                    <button type="submit" class="inline-flex h-10 items-center justify-center rounded-lg bg-emerald-600 px-4 text-sm font-medium text-white shadow-sm transition hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2">Save settings</button>
+                </div>
+            </form>
+        </section>
+
+        <section class="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+            <header class="border-b border-slate-200 px-6 py-5">
+                <h2 class="text-base font-semibold">LLM</h2>
+                <p class="mt-1 text-sm text-slate-500">Primary/fallback models and request behaviour.</p>
+            </header>
+            <form hx-put="/api/settings" hx-ext="json-enc" hx-swap="none"
+                  hx-on::after-request="if(event.detail.successful){ window.location.reload() }"
+                  class="p-6">
+                <div class="grid grid-cols-1 gap-x-6 gap-y-5 md:grid-cols-2">
+                    <div>
+                        <label for="llm-primary" class="mb-2 block text-sm font-medium">Primary model</label>
+                        <input id="llm-primary" type="text" name="LLM_PRIMARY" value="{{ settings_values.LLM_PRIMARY }}"
+                               class="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20">
+                    </div>
+                    <div>
+                        <label for="llm-fallback" class="mb-2 block text-sm font-medium">Fallback model</label>
+                        <input id="llm-fallback" type="text" name="LLM_FALLBACK" value="{{ settings_values.LLM_FALLBACK }}"
+                               class="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20">
+                    </div>
+                    <div>
+                        <label for="llm-timeout" class="mb-2 block text-sm font-medium">Timeout</label>
+                        <div class="relative">
+                            <input id="llm-timeout" type="number" min="1" name="LLM_TIMEOUT" value="{{ settings_values.LLM_TIMEOUT }}"
+                                   class="h-10 w-full rounded-lg border border-slate-200 px-3 pr-16 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20">
+                            <span class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">seconds</span>
+                        </div>
+                    </div>
+                    <div>
+                        <label for="llm-retries" class="mb-2 block text-sm font-medium">Max retries</label>
+                        <input id="llm-retries" type="number" min="1" name="LLM_MAX_RETRIES" value="{{ settings_values.LLM_MAX_RETRIES }}"
+                               class="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20">
                     </div>
                 </div>
                 <div class="mt-6 flex justify-end border-t border-slate-200 pt-6">
@@ -89,6 +136,74 @@
                         <label for="chat-system-prompt" class="mb-2 block text-sm font-medium">System prompt</label>
                         <textarea id="chat-system-prompt" name="CHAT_SYSTEM_PROMPT" rows="4"
                                   class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20">{{ settings_values.CHAT_SYSTEM_PROMPT }}</textarea>
+                    </div>
+                </div>
+                <div class="mt-6 flex justify-end border-t border-slate-200 pt-6">
+                    <button type="submit" class="inline-flex h-10 items-center justify-center rounded-lg bg-emerald-600 px-4 text-sm font-medium text-white shadow-sm transition hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2">Save settings</button>
+                </div>
+            </form>
+        </section>
+
+        <section class="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+            <header class="border-b border-slate-200 px-6 py-5">
+                <h2 class="text-base font-semibold">Embeddings</h2>
+                <p class="mt-1 text-sm text-slate-500">Embedding provider used for semantic search indexing.</p>
+            </header>
+            <form hx-put="/api/settings" hx-ext="json-enc" hx-swap="none"
+                  hx-on::after-request="if(event.detail.successful){ window.location.reload() }"
+                  class="p-6">
+                <div class="grid grid-cols-1 gap-x-6 gap-y-5 md:grid-cols-2">
+                    <div>
+                        <label for="embed-provider" class="mb-2 block text-sm font-medium">Provider</label>
+                        <input id="embed-provider" type="text" name="EMBED_PROVIDER" value="{{ settings_values.EMBED_PROVIDER }}"
+                               class="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20">
+                    </div>
+                    <div>
+                        <label for="embed-model" class="mb-2 block text-sm font-medium">Model</label>
+                        <input id="embed-model" type="text" name="EMBED_MODEL" value="{{ settings_values.EMBED_MODEL }}"
+                               class="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20">
+                    </div>
+                    <div class="md:col-span-2">
+                        <label for="embed-url" class="mb-2 block text-sm font-medium">Base URL</label>
+                        <input id="embed-url" type="text" name="EMBED_BASE_URL" value="{{ settings_values.EMBED_BASE_URL }}"
+                               class="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20">
+                    </div>
+                </div>
+                <div class="mt-6 flex justify-end border-t border-slate-200 pt-6">
+                    <button type="submit" class="inline-flex h-10 items-center justify-center rounded-lg bg-emerald-600 px-4 text-sm font-medium text-white shadow-sm transition hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2">Save settings</button>
+                </div>
+            </form>
+        </section>
+
+        <section class="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+            <header class="border-b border-slate-200 px-6 py-5">
+                <h2 class="text-base font-semibold">Search &amp; RAG</h2>
+                <p class="mt-1 text-sm text-slate-500">Hybrid retrieval: semantic embeddings + keyword search.</p>
+            </header>
+            <form hx-put="/api/settings" hx-ext="json-enc" hx-swap="none"
+                  hx-on::after-request="if(event.detail.successful){ window.location.reload() }"
+                  class="p-6">
+                <div class="grid grid-cols-1 gap-x-6 gap-y-5 md:grid-cols-2">
+                    <div>
+                        <label for="rag-enabled" class="mb-2 block text-sm font-medium">Enable hybrid search</label>
+                        <select id="rag-enabled" name="RAG_HYBRID_ENABLED"
+                                class="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20">
+                            <option value="true" {% if settings_values.RAG_HYBRID_ENABLED %}selected{% endif %}>Enabled</option>
+                            <option value="false" {% if not settings_values.RAG_HYBRID_ENABLED %}selected{% endif %}>Disabled</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="rag-ratio" class="mb-2 block text-sm font-medium">Semantic ratio</label>
+                        <input id="rag-ratio" type="number" step="0.05" min="0" max="1" name="RAG_HYBRID_RATIO"
+                               value="{{ settings_values.RAG_HYBRID_RATIO }}"
+                               class="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20">
+                        <p class="mt-1.5 text-xs text-slate-400">0.0 = keyword only, 1.0 = semantic only.</p>
+                    </div>
+                    <div>
+                        <label for="rag-limit" class="mb-2 block text-sm font-medium">Search result limit</label>
+                        <input id="rag-limit" type="number" min="1" name="RAG_SEARCH_LIMIT"
+                               value="{{ settings_values.RAG_SEARCH_LIMIT }}"
+                               class="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20">
                     </div>
                 </div>
                 <div class="mt-6 flex justify-end border-t border-slate-200 pt-6">

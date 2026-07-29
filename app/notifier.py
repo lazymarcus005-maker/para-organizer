@@ -58,7 +58,15 @@ async def notify_deadline(note: dict, days_left: int) -> bool:
         f"🔴 Priority: {str(note.get('priority', 'medium')).title()}\n\n"
         f"🔗 ดูรายละเอียด: {settings.WEB_PUBLIC_URL}/notes/{note['id']}"
     )
-    results = [await send_telegram(chat_id, text) for chat_id in _note_chat_ids(note)]
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("+1d", callback_data=f"deadline:snooze:1:{note['id']}"),
+            InlineKeyboardButton("+3d", callback_data=f"deadline:snooze:3:{note['id']}"),
+            InlineKeyboardButton("+7d", callback_data=f"deadline:snooze:7:{note['id']}"),
+            InlineKeyboardButton("✅ Done", callback_data=f"deadline:done:{note['id']}"),
+        ]
+    ])
+    results = [await send_telegram(chat_id, text, reply_markup=keyboard) for chat_id in _note_chat_ids(note)]
     return bool(results) and all(results)
 
 

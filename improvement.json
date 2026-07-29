@@ -5,7 +5,6 @@
   "created": "2026-07-26",
   "owner": "Marcus",
   "goal": "ยกระดับจาก 'ระบบเก็บโน้ต + เตือน' ไปเป็น 'Second Brain ที่คิดต่อยอดได้' และเชื่อม Hermes/MCP ได้ครบวงจร โดยแบ่งงานให้ 3 agents ทำพร้อมกันแบบไม่ชนไฟล์",
-
   "agents": {
     "codex": {
       "model": "Codex GPT-5.5",
@@ -48,7 +47,6 @@
       ]
     }
   },
-
   "status_legend": {
     "pending": "ยังไม่เริ่ม",
     "in_progress": "agent กำลังทำ (ตั้ง started_at)",
@@ -56,7 +54,6 @@
     "review": "โค้ดเสร็จ รอ review/merge",
     "done": "merge เข้า main แล้ว"
   },
-
   "parallelization_rules": [
     "1 task = 1 agent เท่านั้น (ดู field 'agent')",
     "agent ห้ามแตะไฟล์นอก lane_files ของตัวเองใน phase เดียวกัน",
@@ -65,7 +62,6 @@
     "Phase 0 ต้องเสร็จก่อน Phase 1+ เพราะแก้ schema (database.py / models.py) ที่ทุกคนใช้ร่วม",
     "แต่ละ agent ทำงานบน git branch แยก: feature/<phase>-<agent> แล้วเปิด PR"
   ],
-
   "file_ownership_matrix": {
     "app/database.py": "codex (เฉพาะ Phase 0 — หลังจากนั้น freeze)",
     "app/models.py": "codex (เฉพาะ Phase 0 — หลังจากนั้น freeze)",
@@ -79,7 +75,6 @@
     "app/static/*": "opencode-qwen",
     "app/routes/backup.py": "opencode-qwen"
   },
-
   "phases": [
     {
       "phase": 0,
@@ -95,7 +90,11 @@
           "status": "pending",
           "depends_on": [],
           "complexity": "M",
-          "files": ["app/database.py", "app/models.py", "app/migrations/"],
+          "files": [
+            "app/database.py",
+            "app/models.py",
+            "app/migrations/"
+          ],
           "scope": [
             "เพิ่มคอลัมน์ notes.embedding_status TEXT DEFAULT 'pending' (สำหรับ backfill)",
             "เพิ่มคอลัมน์ notes.recurrence TEXT (JSON: {freq, interval, next_run}) รองรับ recurring notes",
@@ -111,9 +110,14 @@
           "title_th": "helper กลางสำหรับนับ token/cost ทุกครั้งที่เรียก LLM",
           "agent": "codex",
           "status": "pending",
-          "depends_on": ["F0-1"],
+          "depends_on": [
+            "F0-1"
+          ],
           "complexity": "S",
-          "files": ["app/usage.py", "app/classifier.py"],
+          "files": [
+            "app/usage.py",
+            "app/classifier.py"
+          ],
           "scope": [
             "app/usage.py: log_usage(model, task, usage_dict, note_id) เขียนลงตาราง llm_usage",
             "hook เข้า call_ollama() ให้บันทึกทุก call อัตโนมัติ",
@@ -123,7 +127,6 @@
         }
       ]
     },
-
     {
       "phase": 1,
       "name": "Core Capabilities — MCP completeness / Automation / Quick UX",
@@ -135,10 +138,14 @@
           "title": "เติม MCP tools ที่ขาด (update / complete / delete / reclassify)",
           "title_th": "ทำให้ Hermes จัดการโน้ตได้ครบวงจร ไม่ใช่แค่ add/move/archive",
           "agent": "codex",
-          "status": "pending",
-          "depends_on": ["F0-1"],
+          "status": "done",
+          "depends_on": [
+            "F0-1"
+          ],
           "complexity": "M",
-          "files": ["app/mcp/mcp_server.py"],
+          "files": [
+            "app/mcp/mcp_server.py"
+          ],
           "scope": [
             "para_update(id, title?, content?, priority?, deadline?, tags?)",
             "para_complete(id) → status=completed + log history",
@@ -153,10 +160,13 @@
           "title": "Auto-priority escalation",
           "title_th": "โน้ต deadline < 3 วัน แต่ priority ต่ำ → เด้งเป็น urgent อัตโนมัติ",
           "agent": "claude-haiku",
-          "status": "pending",
+          "status": "done",
           "depends_on": [],
           "complexity": "S",
-          "files": ["app/scheduler.py", "app/notifier.py"],
+          "files": [
+            "app/scheduler.py",
+            "app/notifier.py"
+          ],
           "scope": [
             "scheduler job รายวัน: หา active notes ที่ deadline<=3d และ priority in (low,medium)",
             "อัปเดตเป็น urgent + log history 'escalated'",
@@ -169,10 +179,13 @@
           "title": "Daily quick-capture UI",
           "title_th": "หน้าเว็บช่องเดียวพิมพ์เร็วๆ แบบ inbox-zero",
           "agent": "opencode-qwen",
-          "status": "pending",
+          "status": "done",
           "depends_on": [],
           "complexity": "S",
-          "files": ["app/templates/index.html", "app/static/app.js"],
+          "files": [
+            "app/templates/index.html",
+            "app/static/app.js"
+          ],
           "scope": [
             "ช่อง textarea เดียว + ปุ่ม Capture (HTMX POST /api/notes)",
             "แสดง toast + auto-clear หลังบันทึก",
@@ -182,7 +195,6 @@
         }
       ]
     },
-
     {
       "phase": 2,
       "name": "Intelligence & Proactive — Second Brain features",
@@ -193,10 +205,15 @@
           "title": "Semantic auto-linking",
           "title_th": "สร้างโน้ตใหม่ → หา top-3 โน้ตใกล้เคียงด้วย embedding แล้ว link อัตโนมัติ",
           "agent": "codex",
-          "status": "pending",
-          "depends_on": ["F0-1"],
+          "status": "done",
+          "depends_on": [
+            "F0-1"
+          ],
           "complexity": "M",
-          "files": ["app/linker.py", "app/classifier.py"],
+          "files": [
+            "app/linker.py",
+            "app/classifier.py"
+          ],
           "scope": [
             "app/linker.py: suggest_links(note_id) ใช้ semantic_search หา top-k",
             "auto-create links (type=related) ถ้า similarity > threshold",
@@ -210,10 +227,12 @@
           "title": "Confidence-based inbox routing",
           "title_th": "โน้ต confidence < 0.7 ค้าง inbox รอ review แทน auto-file ผิดหมวด",
           "agent": "codex",
-          "status": "pending",
+          "status": "done",
           "depends_on": [],
           "complexity": "S",
-          "files": ["app/classifier.py"],
+          "files": [
+            "app/classifier.py"
+          ],
           "scope": [
             "ถ้า llm_confidence < RECLASSIFY_CONFIDENCE_THRESHOLD → บังคับ para_category='inbox'",
             "log reason ให้ human review",
@@ -226,10 +245,14 @@
           "title": "Deadline snooze/reschedule (Telegram inline)",
           "title_th": "ปุ่มเลื่อน deadline ได้จากการแจ้งเตือน Telegram",
           "agent": "claude-haiku",
-          "status": "pending",
-          "depends_on": ["IMP-06"],
+          "status": "done",
+          "depends_on": [
+            "IMP-06"
+          ],
           "complexity": "M",
-          "files": ["app/integrations/telegram_bot.py"],
+          "files": [
+            "app/integrations/telegram_bot.py"
+          ],
           "scope": [
             "แนบ inline keyboard ตอนเตือน deadline: +1d / +3d / +7d / Done",
             "callback handler เรียก para_update / para_complete",
@@ -242,10 +265,14 @@
           "title": "Recurring notes",
           "title_th": "โน้ตทำซ้ำ (จ่ายบิลรายเดือน) auto-regenerate หลัง complete",
           "agent": "claude-haiku",
-          "status": "pending",
-          "depends_on": ["F0-1"],
+          "status": "done",
+          "depends_on": [
+            "F0-1"
+          ],
           "complexity": "M",
-          "files": ["app/scheduler.py"],
+          "files": [
+            "app/scheduler.py"
+          ],
           "scope": [
             "อ่าน field recurrence (JSON) ที่เพิ่มใน F0-1",
             "เมื่อโน้ต recurring ถูก complete → สร้าง instance ใหม่ deadline ถัดไป",
@@ -258,10 +285,13 @@
           "title": "Kanban view",
           "title_th": "ลาก projects ข้าม status แบบ board",
           "agent": "opencode-qwen",
-          "status": "pending",
+          "status": "done",
           "depends_on": [],
           "complexity": "M",
-          "files": ["app/templates/_board.html", "app/static/app.js"],
+          "files": [
+            "app/templates/_board.html",
+            "app/static/app.js"
+          ],
           "scope": [
             "คอลัมน์ตาม status: active / completed / archived (หรือตาม PARA)",
             "drag-drop → PUT /api/notes/{id} อัปเดต",
@@ -274,10 +304,12 @@
           "title": "Backup to cloud",
           "title_th": "auto-backup DB ขึ้น Alibaba OSS / R2 รายวัน",
           "agent": "opencode-qwen",
-          "status": "pending",
+          "status": "done",
           "depends_on": [],
           "complexity": "S",
-          "files": ["app/routes/backup.py"],
+          "files": [
+            "app/routes/backup.py"
+          ],
           "scope": [
             "ต่อยอด backup ปัจจุบัน: อัปโหลด dump ขึ้น object storage",
             "เก็บ retention N วัน",
@@ -287,7 +319,6 @@
         }
       ]
     },
-
     {
       "phase": 3,
       "name": "Insight & Ops — AI Review / Sync / Dashboard",
@@ -298,10 +329,15 @@
           "title": "Weekly AI Review + Smart Digest++",
           "title_th": "LLM อ่านโน้ตทั้งหมด → บทวิเคราะห์ + แนะนำ 3 action ส่ง Telegram",
           "agent": "codex",
-          "status": "pending",
-          "depends_on": ["F0-2"],
+          "status": "done",
+          "depends_on": [
+            "F0-2"
+          ],
           "complexity": "L",
-          "files": ["app/review.py", "app/chat.py"],
+          "files": [
+            "app/review.py",
+            "app/chat.py"
+          ],
           "scope": [
             "app/review.py: รวบรวม digest data + ป้อน LLM ให้เขียนบทวิเคราะห์",
             "ระบุ: project ค้าง, area ถูกละเลย, resource ต่อยอด project ได้",
@@ -315,10 +351,14 @@
           "title": "para_ask MCP tool (ask-my-brain)",
           "title_th": "ถามคำถามข้ามโน้ตทั้งหมดผ่าน Hermes ด้วย RAG",
           "agent": "codex",
-          "status": "pending",
-          "depends_on": ["IMP-06"],
+          "status": "done",
+          "depends_on": [
+            "IMP-06"
+          ],
           "complexity": "M",
-          "files": ["app/mcp/mcp_server.py"],
+          "files": [
+            "app/mcp/mcp_server.py"
+          ],
           "scope": [
             "expose chat_reply/RAG logic เป็น MCP tool para_ask(question)",
             "คืนคำตอบพร้อม note ids ที่อ้างอิง",
@@ -331,10 +371,13 @@
           "title": "Stale project nudge",
           "title_th": "โปรเจกต์เงียบ 14 วัน → ping ถาม 'ยังทำอยู่ไหม?'",
           "agent": "claude-haiku",
-          "status": "pending",
+          "status": "done",
           "depends_on": [],
           "complexity": "S",
-          "files": ["app/notifier.py", "app/scheduler.py"],
+          "files": [
+            "app/notifier.py",
+            "app/scheduler.py"
+          ],
           "scope": [
             "ใช้ stale detection ที่มีใน digest แล้ว",
             "proactive Telegram ping พร้อมปุ่ม: ยังทำ / archive"
@@ -346,10 +389,13 @@
           "title": "Bidirectional Hermes cron sync + tests",
           "title_th": "server-monitor / blogwatcher จาก Hermes เข้าเป็นโน้ตอัตโนมัติ",
           "agent": "claude-haiku",
-          "status": "pending",
+          "status": "done",
           "depends_on": [],
           "complexity": "M",
-          "files": ["app/routes/cron_webhook.py", "tests/"],
+          "files": [
+            "app/routes/cron_webhook.py",
+            "tests/"
+          ],
           "scope": [
             "ตรวจ endpoint /api/notes/cron รับ payload จาก Hermes จริง",
             "dedup โน้ตซ้ำจาก cron เดิม",
@@ -362,10 +408,13 @@
           "title": "Voice note (Whisper STT)",
           "title_th": "Telegram voice → ถอดเสียง → โน้ต",
           "agent": "claude-haiku",
-          "status": "pending",
+          "status": "done",
           "depends_on": [],
           "complexity": "M",
-          "files": ["app/integrations/telegram_bot.py", "app/routes/telegram_webhook.py"],
+          "files": [
+            "app/integrations/telegram_bot.py",
+            "app/routes/telegram_webhook.py"
+          ],
           "scope": [
             "รับ voice message, ดาวน์โหลด, ส่ง Whisper STT (Nous plan)",
             "ข้อความที่ถอด → flow สร้างโน้ตปกติ"
@@ -377,10 +426,15 @@
           "title": "Cost dashboard UI",
           "title_th": "แสดง LLM calls/tokens/cost ต่อวัน (cost-conscious)",
           "agent": "opencode-qwen",
-          "status": "pending",
-          "depends_on": ["F0-2"],
+          "status": "done",
+          "depends_on": [
+            "F0-2"
+          ],
           "complexity": "S",
-          "files": ["app/templates/stats.html", "app/routes/stats.py"],
+          "files": [
+            "app/templates/stats.html",
+            "app/routes/stats.py"
+          ],
           "scope": [
             "อ่าน usage_summary() (จาก F0-2) มาแสดงกราฟ/ตาราง",
             "แยกตาม model + task",
@@ -393,10 +447,15 @@
           "title": "Graph view (note links)",
           "title_th": "แสดงความเชื่อมโยงโน้ตเป็นกราฟแบบ Obsidian",
           "agent": "opencode-qwen",
-          "status": "pending",
-          "depends_on": ["IMP-01"],
+          "status": "done",
+          "depends_on": [
+            "IMP-01"
+          ],
           "complexity": "M",
-          "files": ["app/templates/graph.html", "app/static/app.js"],
+          "files": [
+            "app/templates/graph.html",
+            "app/static/app.js"
+          ],
           "scope": [
             "endpoint คืน nodes+edges จาก links table",
             "render ด้วย vis-network (CDN)",
@@ -409,10 +468,15 @@
           "title": "Note distillation on archive",
           "title_th": "ก่อน archive → LLM สรุปบทเรียน 1 บรรทัด เก็บเป็น resource",
           "agent": "codex",
-          "status": "pending",
-          "depends_on": ["IMP-06"],
+          "status": "done",
+          "depends_on": [
+            "IMP-06"
+          ],
           "complexity": "S",
-          "files": ["app/mcp/mcp_server.py", "app/chat.py"],
+          "files": [
+            "app/mcp/mcp_server.py",
+            "app/chat.py"
+          ],
           "scope": [
             "ตอน para_archive → เรียก LLM สรุป key takeaway",
             "เก็บเป็น resource note หรือ field summary"
@@ -424,10 +488,15 @@
           "title": "Embedding backfill job",
           "title_th": "re-embed โน้ตเก่าที่ embedding_status='pending'",
           "agent": "claude-haiku",
-          "status": "pending",
-          "depends_on": ["F0-1"],
+          "status": "done",
+          "depends_on": [
+            "F0-1"
+          ],
           "complexity": "S",
-          "files": ["app/scheduler.py", "app/embed.py"],
+          "files": [
+            "app/scheduler.py",
+            "app/embed.py"
+          ],
           "scope": [
             "scheduler job หา notes embedding_status='pending'",
             "สร้าง embedding + เขียน vector store + set status='done'",
@@ -438,16 +507,42 @@
       ]
     }
   ],
-
   "summary": {
     "total_tasks": 22,
     "by_agent": {
-      "codex": ["F0-1", "F0-2", "IMP-06", "IMP-01", "IMP-18", "IMP-02", "IMP-04", "IMP-05"],
-      "claude-haiku": ["IMP-10", "IMP-09", "IMP-12", "IMP-11", "IMP-07", "IMP-13", "IMP-17"],
-      "opencode-qwen": ["IMP-15", "IMP-14", "IMP-20", "IMP-19", "IMP-16"]
+      "codex": [
+        "F0-1",
+        "F0-2",
+        "IMP-06",
+        "IMP-01",
+        "IMP-18",
+        "IMP-02",
+        "IMP-04",
+        "IMP-05"
+      ],
+      "claude-haiku": [
+        "IMP-10",
+        "IMP-09",
+        "IMP-12",
+        "IMP-11",
+        "IMP-07",
+        "IMP-13",
+        "IMP-17"
+      ],
+      "opencode-qwen": [
+        "IMP-15",
+        "IMP-14",
+        "IMP-20",
+        "IMP-19",
+        "IMP-16"
+      ]
     },
     "critical_path": "F0-1 → F0-2 → IMP-02 (Weekly AI Review เป็นงานที่ depends มากสุด)",
-    "recommended_start": ["IMP-06", "IMP-02", "IMP-01"],
+    "recommended_start": [
+      "IMP-06",
+      "IMP-02",
+      "IMP-01"
+    ],
     "parallel_safe_note": "ทุก task ใน phase เดียวกันแตะไฟล์คนละชุด (ดู file_ownership_matrix) → 3 agents run พร้อมกันได้ ยกเว้น Phase 0 ที่ต้อง sequential"
   }
 }

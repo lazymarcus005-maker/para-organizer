@@ -34,6 +34,7 @@ from app.mcp.mcp_server import (
 ALL_TOOLS = {
     "para_add_note", "para_search", "para_list", "para_get", "para_move",
     "para_archive", "para_stats", "para_deadlines", "para_digest", "para_add_link",
+    "para_update", "para_complete", "para_delete", "para_reclassify", "para_ask",
 }
 
 

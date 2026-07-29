@@ -18,12 +18,20 @@ _PERSISTED_SETTING_CASTS = {
     "NOTIFY_DIGEST_DAY": str,
     "NOTIFY_DIGEST_TIME": str,
     "NOTIFY_STALE_DAYS": int,
+    "NOTIFY_CHANNEL": str,
     "AUTO_ARCHIVE_DAYS": int,
     "RECLASSIFY_INTERVAL_HOURS": int,
     "RECLASSIFY_CONFIDENCE_THRESHOLD": float,
+    "LLM_PRIMARY": str,
+    "LLM_FALLBACK": str,
+    "LLM_TIMEOUT": int,
+    "LLM_MAX_RETRIES": int,
     "CHAT_MODEL": str,
     "CHAT_HISTORY_MAX": int,
     "CHAT_SYSTEM_PROMPT": str,
+    "EMBED_PROVIDER": str,
+    "EMBED_BASE_URL": str,
+    "EMBED_MODEL": str,
     "RAG_HYBRID_ENABLED": _cast_bool,
     "RAG_HYBRID_RATIO": float,
     "RAG_SEARCH_LIMIT": int,
@@ -88,6 +96,14 @@ class Settings(BaseSettings):
     RAG_HYBRID_ENABLED: bool = True
     RAG_HYBRID_RATIO: float = 0.5
     RAG_SEARCH_LIMIT: int = 5
+
+    # ─── Cloud Backup (S3-compatible) ───
+    BACKUP_CLOUD_ENABLED: bool = False
+    BACKUP_CLOUD_ENDPOINT: str = ""
+    BACKUP_CLOUD_BUCKET: str = ""
+    BACKUP_CLOUD_ACCESS_KEY: str = ""
+    BACKUP_CLOUD_SECRET_KEY: str = ""
+    BACKUP_CLOUD_RETENTION_DAYS: int = 30
 
 
 settings = Settings()

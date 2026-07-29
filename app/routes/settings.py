@@ -19,12 +19,20 @@ SETTINGS_KEYS: dict[str, type] = {
     "NOTIFY_DIGEST_DAY": str,
     "NOTIFY_DIGEST_TIME": str,
     "NOTIFY_STALE_DAYS": int,
+    "NOTIFY_CHANNEL": str,
     "AUTO_ARCHIVE_DAYS": int,
     "RECLASSIFY_INTERVAL_HOURS": int,
     "RECLASSIFY_CONFIDENCE_THRESHOLD": float,
+    "LLM_PRIMARY": str,
+    "LLM_FALLBACK": str,
+    "LLM_TIMEOUT": int,
+    "LLM_MAX_RETRIES": int,
     "CHAT_MODEL": str,
     "CHAT_HISTORY_MAX": int,
     "CHAT_SYSTEM_PROMPT": str,
+    "EMBED_PROVIDER": str,
+    "EMBED_BASE_URL": str,
+    "EMBED_MODEL": str,
     "RAG_HYBRID_ENABLED": _cast_bool,
     "RAG_HYBRID_RATIO": float,
     "RAG_SEARCH_LIMIT": int,
@@ -56,8 +64,10 @@ def _validate_setting(key: str, value) -> None:
     elif key == "NOTIFY_DIGEST_TIME":
         if not _DIGEST_TIME_RE.match(str(value)):
             raise HTTPException(status_code=422, detail="NOTIFY_DIGEST_TIME must be in HH:MM format")
+    elif key == "NOTIFY_CHANNEL" and value not in ("telegram", "none"):
+        raise HTTPException(status_code=422, detail="NOTIFY_CHANNEL must be 'telegram' or 'none'")
     elif key in ("NOTIFY_STALE_DAYS", "AUTO_ARCHIVE_DAYS", "RECLASSIFY_INTERVAL_HOURS", "CHAT_HISTORY_MAX",
-                 "RAG_SEARCH_LIMIT") and value <= 0:
+                 "RAG_SEARCH_LIMIT", "LLM_TIMEOUT", "LLM_MAX_RETRIES") and value <= 0:
         raise HTTPException(status_code=422, detail=f"{key} must be a positive integer")
     elif key == "RECLASSIFY_CONFIDENCE_THRESHOLD" and not 0.0 <= value <= 1.0:
         raise HTTPException(status_code=422, detail="RECLASSIFY_CONFIDENCE_THRESHOLD must be between 0.0 and 1.0")

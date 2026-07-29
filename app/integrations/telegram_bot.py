@@ -19,7 +19,7 @@ from app.config import settings
 from app.database import get_connection
 from app.models import PARA_CATEGORIES
 from app.notifier import send_telegram
-from app.utils import row_to_note
+from app.utils import row_to_note, spawn_recurring_instance
 
 logger = logging.getLogger("para.telegram")
 
@@ -173,9 +173,10 @@ async def _archive(note_id: str) -> str:
     if not note_id.isdigit():
         return "วิธีใช้: /done <id>"
     async with get_connection() as db:
-        row = await (await db.execute("SELECT para_category FROM notes WHERE id = ?", (int(note_id),))).fetchone()
+        row = await (await db.execute("SELECT * FROM notes WHERE id = ?", (int(note_id),))).fetchone()
         if not row:
             return "ไม่พบโน้ต"
+        note = row_to_note(row)
         await db.execute(
             """UPDATE notes SET status = 'archived', para_category = 'archives',
                archived_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?""",
@@ -186,8 +187,12 @@ async def _archive(note_id: str) -> str:
                VALUES (?, 'archived', ?, 'archives')""",
             (int(note_id), row["para_category"]),
         )
+        next_id = await spawn_recurring_instance(db, note)
         await db.commit()
-    return f"✅ Archive โน้ต #{note_id} แล้ว"
+    msg = f"✅ Archive โน้ต #{note_id} แล้ว"
+    if next_id:
+        msg += f"\n🔁 สร้างโน้ตถัดไป #{next_id} แล้ว"
+    return msg
 
 
 async def _move(args: list[str]) -> str:
@@ -386,7 +391,6 @@ async def _handle_update(update: dict) -> None:
             category = data.partition(":")[2]
             await send_telegram(chat_id, await _list_notes(category))
         elif data.startswith("stale:"):
-            # Handle stale project Keep/Archive buttons
             parts = data.split(":")
             if len(parts) == 3:
                 action, note_id_str = parts[1], parts[2]
@@ -401,7 +405,6 @@ async def _handle_update(update: dict) -> None:
                             return
                         
                         if action == "keep":
-                            # Update last_checked to mark as current
                             await db.execute(
                                 "UPDATE notes SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                                 (note_id,),
@@ -412,7 +415,6 @@ async def _handle_update(update: dict) -> None:
                             )
                             await send_telegram(chat_id, f"✅ Marked as active! Will remind you in {settings.NOTIFY_STALE_DAYS} days.")
                         elif action == "archive":
-                            # Archive the project
                             await db.execute(
                                 "UPDATE notes SET status = 'archived', para_category = 'archives', archived_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                                 (note_id,),
@@ -426,6 +428,55 @@ async def _handle_update(update: dict) -> None:
                         await db.commit()
                 except (ValueError, IndexError):
                     await send_telegram(chat_id, "❌ Invalid note ID")
+        elif data.startswith("deadline:"):
+            parts = data.split(":")
+            if len(parts) == 4:
+                action, days_str, note_id_str = parts[1], parts[2], parts[3]
+                try:
+                    note_id = int(note_id_str)
+                    async with get_connection() as db:
+                        row = await (await db.execute(
+                            "SELECT deadline, status FROM notes WHERE id = ?", (note_id,)
+                        )).fetchone()
+                        if not row:
+                            await send_telegram(chat_id, "❌ Note not found")
+                            return
+
+                        if action == "snooze":
+                            days = int(days_str)
+                            old_deadline = row["deadline"]
+                            new_deadline = (date.fromisoformat(str(old_deadline)[:10]) + timedelta(days=days)).isoformat()
+                            await db.execute(
+                                "UPDATE notes SET deadline = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                                (new_deadline, note_id),
+                            )
+                            await db.execute(
+                                "INSERT INTO history (note_id, action, old_value, new_value, reason) VALUES (?, 'deadline_snoozed', ?, ?, ?)",
+                                (note_id, old_deadline, new_deadline, f"Snoozed +{days}d from Telegram"),
+                            )
+                            await db.commit()
+                            await send_telegram(chat_id, f"📅 เลื่อน deadline #{note_id} → {format_date(new_deadline)}")
+                        elif action == "done":
+                            note_row = await (await db.execute(
+                                "SELECT * FROM notes WHERE id = ?", (note_id,)
+                            )).fetchone()
+                            note = row_to_note(note_row)
+                            await db.execute(
+                                "UPDATE notes SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                                (note_id,),
+                            )
+                            await db.execute(
+                                "INSERT INTO history (note_id, action, new_value, reason) VALUES (?, 'completed', 'completed', 'Marked done from Telegram deadline reminder')",
+                                (note_id,),
+                            )
+                            next_id = await spawn_recurring_instance(db, note)
+                            await db.commit()
+                            msg = f"✅ โน้ต #{note_id} เสร็จสิ้นแล้ว!"
+                            if next_id:
+                                msg += f"\n🔁 สร้างโน้ตถัดไป #{next_id} แล้ว"
+                            await send_telegram(chat_id, msg)
+                except (ValueError, IndexError):
+                    await send_telegram(chat_id, "❌ Invalid data")
         return
 
     message = update.get("message") or update.get("edited_message")

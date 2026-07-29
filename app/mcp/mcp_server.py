@@ -34,11 +34,13 @@ from datetime import date, timedelta
 
 from mcp.server.fastmcp import FastMCP
 
+from app import classifier
 from app.classifier import classify_note, extract_deadline_from_text
 from app.config import settings
 from app.database import get_connection, init_db
+from app.distill import distill_note
 from app.models import PARA_CATEGORIES
-from app.utils import row_to_note
+from app.utils import row_to_note, spawn_recurring_instance
 from app.vector_store import delete_note_embedding
 
 logger = logging.getLogger("para.mcp")
@@ -237,6 +239,12 @@ async def para_archive(id: int) -> dict:
             (id,),
         )
         await _log_history(db, id, "archived", old_value=existing["para_category"], new_value="archives")
+
+        summary = await distill_note(db, id)
+        if summary:
+            await db.execute("UPDATE notes SET summary = ? WHERE id = ?", (summary, id))
+            await _log_history(db, id, "distilled", new_value=summary)
+
         await db.commit()
         return await _fetch_note(db, id)
 
@@ -470,13 +478,15 @@ async def para_update(id: int, title: str | None = None, content: str | None = N
 
 @mcp.tool()
 async def para_complete(id: int) -> dict:
-    """Mark a note as completed.
+    """Mark a note as completed. If the note has a recurrence config, the next
+    instance is automatically created with the computed next deadline.
 
     Args:
         id: Note ID
 
     Returns:
         The updated note with status='completed', or ``{\"error\": ...}`` if not found.
+        Includes ``next_instance_id`` when a recurring note was spawned.
     """
     async with get_connection() as db:
         existing = await _fetch_note(db, id)
@@ -488,8 +498,14 @@ async def para_complete(id: int) -> dict:
             (id,),
         )
         await _log_history(db, id, "completed", new_value="completed")
+
+        next_id = await spawn_recurring_instance(db, existing)
+
         await db.commit()
-        return await _fetch_note(db, id)
+        result = await _fetch_note(db, id)
+        if next_id is not None:
+            result["next_instance_id"] = next_id
+        return result
 
 
 @mcp.tool()
@@ -572,67 +588,66 @@ async def para_reclassify(id: int) -> dict:
 @mcp.tool()
 async def para_ask(question: str) -> dict:
     """Ask a question across all PARA notes via RAG (semantic + keyword hybrid search).
-    
-    Finds relevant notes using hybrid retrieval, generates answer via LLM,
-    returns answer with cited source note IDs.
-    
+
+    Finds relevant notes using hybrid retrieval, generates an answer grounded in
+    those notes via the LLM, and returns the answer with cited source notes.
+
     Args:
         question: Natural language question
-    
+
     Returns:
         {
             "answer": "...",
-            "sources": [{"note_id": X, "title": "...", "relevance": 0.85}, ...]
+            "sources": [{"note_id", "title", "relevance", "para_category"}, ...]
         }
     """
-    from app.chat import _build_context
-    
+    from app.chat import _hybrid_retrieve
+
     async with get_connection() as db:
-        # Use existing RAG logic from chat.py to find relevant notes
+        matched = await _hybrid_retrieve(question, db)
+
+        if not matched:
+            return {
+                "answer": "ไม่พบโน้ตที่เกี่ยวข้องกับคำถามของคุณ",
+                "sources": [],
+            }
+
+        context_lines = [
+            f"- #{row['id']} [{row['para_category']}] {row['title']}: {(row['content'] or '')[:200]}"
+            for row in matched
+        ]
+        messages = [
+            {"role": "system", "content": settings.CHAT_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    f"คำถาม: {question}\n\n"
+                    f"โน้ตที่เกี่ยวข้อง:\n" + "\n".join(context_lines)
+                ),
+            },
+        ]
+
         try:
-            context = await _build_context(db, question)
-            if not context.get("notes"):
-                return {
-                    "answer": "No relevant notes found to answer this question.",
-                    "sources": []
-                }
-            
-            # Call LLM to generate answer based on context
-            from app.chat import call_ollama
-            prompt = f"""Based on the following notes, answer this question:
-Question: {question}
-
-Notes:
-{context.get('notes', '')}
-
-Provide a concise, actionable answer."""
-            
-            answer = await call_ollama(
-                settings.CHAT_MODEL,
-                prompt,
-                task="ask"
+            answer = await classifier.call_ollama(
+                settings.CHAT_MODEL, messages=messages, format=None, task="ask"
             )
-            
-            # Extract source notes from context
-            sources = []
-            for note_data in context.get("note_list", [])[:3]:  # Top 3 sources
-                sources.append({
-                    "note_id": note_data.get("id"),
-                    "title": note_data.get("title"),
-                    "relevance": note_data.get("similarity", 0.0)
-                })
-            
-            return {
-                "answer": answer,
-                "sources": sources
-            }
+            answer = (answer or "").strip()
         except Exception as e:
-            logger.error("Error in para_ask: %s", e)
-            return {
-                "error": f"Failed to generate answer: {str(e)}",
-                "answer": None,
-                "sources": []
+            logger.error("para_ask LLM call failed: %s", e)
+            answer = "ขออภัย เกิดข้อผิดพลาดขณะสร้างคำตอบ"
+
+        total = max(len(matched), 1)
+        sources = [
+            {
+                "note_id": row["id"],
+                "title": row["title"],
+                "relevance": round(1.0 - (idx / total), 3),
+                "para_category": row["para_category"],
             }
+            for idx, row in enumerate(matched)
+        ]
+
+        return {"answer": answer, "sources": sources}
 
 
 def main() -> None:
