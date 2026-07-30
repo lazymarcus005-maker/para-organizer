@@ -231,10 +231,13 @@ async def para_archive(id: int) -> dict:
         existing = await _fetch_note(db, id)
         if existing is None:
             return {"error": f"Note {id} not found"}
+        from app.distill import distill_note
+
+        summary = await distill_note(db, id)
         await db.execute(
             """UPDATE notes SET para_category = 'archives', status = 'archived',
-               archived_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?""",
-            (id,),
+               summary = ?, archived_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?""",
+            (summary, id),
         )
         await _log_history(db, id, "archived", old_value=existing["para_category"], new_value="archives")
         await db.commit()
@@ -585,42 +588,47 @@ async def para_ask(question: str) -> dict:
             "sources": [{"note_id": X, "title": "...", "relevance": 0.85}, ...]
         }
     """
-    from app.chat import _build_context
+    from app.chat import _hybrid_retrieve
+    from app.classifier import call_ollama
     
     async with get_connection() as db:
         # Use existing RAG logic from chat.py to find relevant notes
         try:
-            context = await _build_context(db, question)
-            if not context.get("notes"):
+            notes = await _hybrid_retrieve(question, db)
+            if not notes:
                 return {
-                    "answer": "No relevant notes found to answer this question.",
+                    "answer": "ไม่พบโน้ตที่เกี่ยวข้องกับคำถามของคุณ",
                     "sources": []
                 }
             
-            # Call LLM to generate answer based on context
-            from app.chat import call_ollama
+            note_context = "\n".join(
+                f"- #{note['id']} [{note['para_category']}] {note['title']}: {(note['content'] or '')[:500]}"
+                for note in notes
+            )
             prompt = f"""Based on the following notes, answer this question:
 Question: {question}
 
 Notes:
-{context.get('notes', '')}
+{note_context}
 
 Provide a concise, actionable answer."""
             
             answer = await call_ollama(
                 settings.CHAT_MODEL,
-                prompt,
+                messages=[{"role": "user", "content": prompt}],
+                format=None,
                 task="ask"
             )
             
-            # Extract source notes from context
-            sources = []
-            for note_data in context.get("note_list", [])[:3]:  # Top 3 sources
-                sources.append({
-                    "note_id": note_data.get("id"),
-                    "title": note_data.get("title"),
-                    "relevance": note_data.get("similarity", 0.0)
-                })
+            sources = [
+                {
+                    "note_id": note["id"],
+                    "title": note["title"],
+                    "relevance": round(1.0 / (index + 1), 3),
+                    "para_category": note["para_category"],
+                }
+                for index, note in enumerate(notes[:3])
+            ]
             
             return {
                 "answer": answer,
