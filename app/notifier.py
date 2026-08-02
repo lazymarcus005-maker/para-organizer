@@ -58,7 +58,15 @@ async def notify_deadline(note: dict, days_left: int) -> bool:
         f"🔴 Priority: {str(note.get('priority', 'medium')).title()}\n\n"
         f"🔗 ดูรายละเอียด: {settings.WEB_PUBLIC_URL}/notes/{note['id']}"
     )
-    results = [await send_telegram(chat_id, text) for chat_id in _note_chat_ids(note)]
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("+1d", callback_data=f"deadline:snooze:1:{note['id']}"),
+            InlineKeyboardButton("+3d", callback_data=f"deadline:snooze:3:{note['id']}"),
+            InlineKeyboardButton("+7d", callback_data=f"deadline:snooze:7:{note['id']}"),
+            InlineKeyboardButton("✅ Done", callback_data=f"deadline:done:{note['id']}"),
+        ]
+    ])
+    results = [await send_telegram(chat_id, text, reply_markup=keyboard) for chat_id in _note_chat_ids(note)]
     return bool(results) and all(results)
 
 
@@ -147,4 +155,23 @@ async def send_digest(digest_data: dict) -> bool:
 async def send_review(review_markdown: str) -> bool:
     """Send the weekly AI review (already-formatted markdown) to all recipients."""
     results = [await send_telegram(chat_id, review_markdown) for chat_id in notification_chat_ids()]
+    return bool(results) and all(results)
+
+
+async def notify_task_proposal(proposal: dict) -> bool:
+    note_id = proposal.get("note_id")
+    note_id_str = str(note_id) if note_id is not None else "none"
+    text = (
+        "🤖 PARA เสนองาน:\n\n"
+        f"{proposal['prompt']}\n\n"
+        f"เหตุผล: {proposal['reason']}\n"
+        f"Confidence: {proposal['confidence']:.0%}"
+    )
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Approve", callback_data=f"autonomy:approve:{note_id_str}:{proposal['task_type']}"),
+            InlineKeyboardButton("❌ Reject", callback_data=f"autonomy:reject:{note_id_str}"),
+        ]
+    ])
+    results = [await send_telegram(chat_id, text, reply_markup=keyboard) for chat_id in notification_chat_ids()]
     return bool(results) and all(results)

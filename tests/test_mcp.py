@@ -35,6 +35,9 @@ ALL_TOOLS = {
     "para_add_note", "para_search", "para_list", "para_get", "para_move",
     "para_archive", "para_stats", "para_deadlines", "para_digest", "para_add_link",
     "para_update", "para_complete", "para_delete", "para_reclassify", "para_ask",
+    "para_context", "para_create_task", "para_task_result", "para_tasks", "para_brain_state",
+    "para_graph_context", "para_related", "para_items", "para_add_item", "para_done_item",
+    "para_plan", "para_feedback_stats",
 }
 
 
@@ -85,7 +88,7 @@ async def test_all_ten_tools_registered(db):
     tools = await mcp.list_tools()
     names = {t.name for t in tools}
     assert names == ALL_TOOLS
-    assert len(tools) == 15  # Now 15 tools: 10 original + para_update, para_complete, para_delete, para_reclassify, para_ask
+    assert len(tools) == 27
 
 
 @pytest.mark.asyncio

@@ -23,6 +23,8 @@ logger = logging.getLogger("para.migrations")
 _MIGRATION_NAMES = [
     "001_initial_schema",
     "002_add_summary_column",
+    "003_second_brain_phase4",
+    "004_second_brain_phase5",
 ]
 
 MIGRATIONS = [

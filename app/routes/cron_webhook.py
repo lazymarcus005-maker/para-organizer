@@ -3,15 +3,19 @@
 import hashlib
 import hmac
 import json
+import logging
 
 import aiosqlite
 from fastapi import APIRouter, Depends, Header, HTTPException
 
+from app.chat import _hybrid_retrieve
 from app.classifier import classify_note, extract_deadline_from_text
 from app.config import settings
 from app.database import get_db
 from app.models import CronNoteCreate
 from app.utils import row_to_note
+
+logger = logging.getLogger("para.cron")
 
 router = APIRouter(prefix="/api", tags=["cron"])
 
@@ -80,5 +84,15 @@ async def create_note_from_cron(
     )
     await db.commit()
     row = await (await db.execute("SELECT * FROM notes WHERE id = ?", (note_id,))).fetchone()
-    return row_to_note(row)
+    note = row_to_note(row)
+    try:
+        related = await _hybrid_retrieve(payload.content, db)
+        note["related_context"] = [
+            {"id": r["id"], "title": r["title"], "para_category": r["para_category"]}
+            for r in related[:3]
+        ]
+    except Exception:
+        logger.warning("related_context retrieval failed for note %s", note_id, exc_info=True)
+        note["related_context"] = []
+    return note
 

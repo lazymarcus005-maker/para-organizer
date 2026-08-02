@@ -8,6 +8,7 @@ from datetime import date, datetime
 import httpx
 
 from app.config import settings
+from app.feedback import get_few_shot_examples
 from app.usage import log_usage
 
 logger = logging.getLogger("para.classifier")
@@ -124,6 +125,19 @@ def _extract_json(text: str) -> dict:
 async def classify_note(title: str, content: str) -> dict:
     """Call the LLM (primary, then fallback) to classify a note. Never raises."""
     prompt = CLASSIFY_PROMPT.format(title=title, content=content)
+
+    try:
+        examples = await get_few_shot_examples("para_category")
+        if examples:
+            lines = ["Recent corrections (learn from these):"]
+            for ex in examples:
+                lines.append(
+                    f"- content: {ex['note_content_snippet']} | "
+                    f"predicted: {ex['llm_value']} | correct: {ex['correct_value']}"
+                )
+            prompt = "\n".join(lines) + "\n\n" + prompt
+    except Exception:
+        logger.warning("Failed to load few-shot feedback examples", exc_info=True)
 
     for model in [settings.LLM_PRIMARY, settings.LLM_FALLBACK]:
         for attempt in range(settings.LLM_MAX_RETRIES):

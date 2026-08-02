@@ -10,8 +10,12 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from app.classifier import classify_note, extract_deadline_from_text
 from app.config import settings
 from app.database import get_db
+from app.events import emit_event
+from app.feedback import record_feedback
+from app.items import create_item, extract_items_from_content, sync_note_progress
 from app.linker import auto_link_note
 from app.models import NoteCreate, NoteMove, NoteUpdate, PARA_CATEGORIES, PRIORITIES, STATUSES
+from app.tasks import suggest_task_from_note
 from app.utils import row_to_note
 from app.vector_store import delete_note_embedding, index_note
 
@@ -101,7 +105,36 @@ async def create_note(payload: NoteCreate, db: aiosqlite.Connection = Depends(ge
     except Exception:
         logger.warning("Failed to auto-link note %s", note_id, exc_info=True)
 
-    return await _fetch_note(db, note_id)
+    try:
+        await emit_event(db, "note.created", note_id, {
+            "title": payload.title,
+            "para_category": para_category,
+            "source": payload.source,
+        })
+    except Exception:
+        logger.warning("Failed to emit note.created for note %s", note_id, exc_info=True)
+
+    note = await _fetch_note(db, note_id)
+
+    if settings.TASK_AUTO_EXTRACT:
+        try:
+            suggested = await suggest_task_from_note(payload.title, payload.content)
+            if suggested:
+                note["suggested_task"] = suggested
+        except Exception:
+            logger.warning("Failed to suggest task for note %s", note_id, exc_info=True)
+
+    try:
+        extracted = await extract_items_from_content(payload.content)
+        if extracted:
+            for text in extracted:
+                await create_item(db, note_id, text)
+            await sync_note_progress(db, note_id)
+            note["items_created"] = len(extracted)
+    except Exception:
+        logger.warning("Failed to extract action items for note %s", note_id, exc_info=True)
+
+    return note
 
 
 @router.get("/notes")
@@ -215,6 +248,14 @@ async def move_note(note_id: int, payload: NoteMove, db: aiosqlite.Connection = 
         (payload.para_category, note_id),
     )
     await _log_history(db, note_id, "moved", old_value=existing["para_category"], new_value=payload.para_category)
+
+    if existing["para_category"] != payload.para_category:
+        try:
+            await record_feedback(db, note_id, "para_category",
+                                  existing["para_category"], payload.para_category)
+        except Exception:
+            logger.warning("Failed to record feedback for note %s", note_id, exc_info=True)
+
     await db.commit()
 
     return await _fetch_note(db, note_id)
@@ -260,6 +301,15 @@ async def reclassify_note(note_id: int, db: aiosqlite.Connection = Depends(get_d
     await _log_history(db, note_id, "classified", old_value=existing["para_category"],
                         new_value=result.get("para_category"), reason=result.get("reasoning"))
     await db.commit()
+
+    try:
+        await emit_event(db, "note.classified", note_id, {
+            "para_category": result.get("para_category", "inbox"),
+            "priority": result.get("priority", "medium"),
+            "llm_confidence": float(result.get("confidence", 0.0)),
+        })
+    except Exception:
+        logger.warning("Failed to emit note.classified for note %s", note_id, exc_info=True)
 
     return await _fetch_note(db, note_id)
 

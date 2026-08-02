@@ -18,12 +18,20 @@ _PERSISTED_SETTING_CASTS = {
     "NOTIFY_DIGEST_DAY": str,
     "NOTIFY_DIGEST_TIME": str,
     "NOTIFY_STALE_DAYS": int,
+    "NOTIFY_CHANNEL": str,
     "AUTO_ARCHIVE_DAYS": int,
     "RECLASSIFY_INTERVAL_HOURS": int,
     "RECLASSIFY_CONFIDENCE_THRESHOLD": float,
+    "LLM_PRIMARY": str,
+    "LLM_FALLBACK": str,
+    "LLM_TIMEOUT": int,
+    "LLM_MAX_RETRIES": int,
     "CHAT_MODEL": str,
     "CHAT_HISTORY_MAX": int,
     "CHAT_SYSTEM_PROMPT": str,
+    "EMBED_PROVIDER": str,
+    "EMBED_BASE_URL": str,
+    "EMBED_MODEL": str,
     "RAG_HYBRID_ENABLED": _cast_bool,
     "RAG_HYBRID_RATIO": float,
     "RAG_SEARCH_LIMIT": int,
@@ -88,6 +96,28 @@ class Settings(BaseSettings):
     RAG_HYBRID_ENABLED: bool = True
     RAG_HYBRID_RATIO: float = 0.5
     RAG_SEARCH_LIMIT: int = 5
+
+    # ─── Cloud Backup (S3-compatible) ───
+    BACKUP_CLOUD_ENABLED: bool = False
+    BACKUP_CLOUD_ENDPOINT: str = ""
+    BACKUP_CLOUD_BUCKET: str = ""
+    BACKUP_CLOUD_ACCESS_KEY: str = ""
+    BACKUP_CLOUD_SECRET_KEY: str = ""
+    BACKUP_CLOUD_RETENTION_DAYS: int = 30
+
+    # ─── Second Brain: Event Bus (SB-01) ───
+    EVENT_WEBHOOK_URL: str = ""
+    EVENT_WEBHOOK_SECRET: str = ""
+    EVENT_TYPES_ENABLED: str = "note.created,note.classified,note.deadline_approaching,note.stale,note.completed,note.low_confidence,review.generated"
+    EVENT_DISPATCH_RETRIES: int = 3
+
+    # ─── Second Brain: Task Delegation (SB-02) ───
+    TASK_AUTO_EXTRACT: bool = True
+    TASK_ACTION_VERBS: str = "ช่วย,เช็ค,รัน,สร้าง,ทดสอบ,deploy,ตรวจสอบ,อัพเดท,อัปเดต,ส่ง,ดาวน์โหลด,ติดตั้ง"
+
+    # ─── Second Brain: Autonomous Task Generation (SB-09) ───
+    AUTONOMY_LEVEL: str = "suggest_only"
+    AUTONOMY_DAILY_HOUR: int = 6
 
 
 settings = Settings()

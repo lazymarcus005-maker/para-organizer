@@ -9,6 +9,7 @@ from fastapi.templating import Jinja2Templates
 
 from app.config import settings
 from app.database import get_db
+from app.health import compute_health
 from app.models import PARA_CATEGORIES, NoteCreate
 from app.routes.backup import list_backup_files
 from app.routes.notes import create_note as api_create_note
@@ -102,3 +103,9 @@ async def settings_page(request: Request, db: aiosqlite.Connection = Depends(get
 @router.get("/graph")
 async def graph_page(request: Request):
     return templates.TemplateResponse(request, "graph.html", {})
+
+
+@router.get("/health")
+async def health_page(request: Request):
+    data = await compute_health()
+    return templates.TemplateResponse(request, "health.html", {"health": data})
