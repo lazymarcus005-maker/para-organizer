@@ -240,10 +240,13 @@ async def para_archive(id: int) -> dict:
         existing = await _fetch_note(db, id)
         if existing is None:
             return {"error": f"Note {id} not found"}
+        from app.distill import distill_note
+
+        summary = await distill_note(db, id)
         await db.execute(
             """UPDATE notes SET para_category = 'archives', status = 'archived',
-               archived_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?""",
-            (id,),
+               summary = ?, archived_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?""",
+            (summary, id),
         )
         await _log_history(db, id, "archived", old_value=existing["para_category"], new_value="archives")
 
@@ -628,7 +631,6 @@ async def para_ask(question: str) -> dict:
         }
     """
     from app.chat import _hybrid_retrieve
-
     async with get_connection() as db:
         matched = await _hybrid_retrieve(question, db)
 

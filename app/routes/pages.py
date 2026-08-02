@@ -31,7 +31,9 @@ KANBAN_CATEGORIES = ["projects", "areas", "resources", "archives"]
 async def index(request: Request, db: aiosqlite.Connection = Depends(get_db)):
     tree = await api_para_tree(db)
     return templates.TemplateResponse(
-        request, "index.html", {"tree": tree["categories"], "columns": KANBAN_CATEGORIES}
+        request,
+        "index.html",
+        {"tree": tree["categories"], "columns": KANBAN_CATEGORIES, "api_key": settings.PARA_SECRET_KEY},
     )
 
 

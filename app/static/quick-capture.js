@@ -40,7 +40,7 @@ function hideToast(element) {
  * Get API key from localStorage or prompt user
  */
 function getApiKey() {
-    let apiKey = localStorage.getItem("para_api_key");
+    let apiKey = form.dataset.apiKey || localStorage.getItem("para_api_key");
     if (!apiKey) {
         apiKey = prompt("Enter your PARA API key:");
         if (apiKey) {
