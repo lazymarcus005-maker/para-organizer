@@ -10,6 +10,7 @@ from app.config import _cast_bool, settings
 from app.database import get_db
 from app.routes.notes import require_api_key
 from app.scheduler import digest_trigger, reclassify_trigger, scheduler
+from app.settings_helper import get_env_settings_groups
 
 router = APIRouter(prefix="/api", tags=["settings"])
 logger = logging.getLogger("para.routes.settings")
@@ -93,6 +94,17 @@ async def get_settings_dict(db: aiosqlite.Connection) -> dict:
 @router.get("/settings")
 async def get_settings(db: aiosqlite.Connection = Depends(get_db)):
     return await get_settings_dict(db)
+
+
+@router.get("/settings/env")
+async def get_env_settings():
+    """Return all environment settings grouped by category.
+
+    Sensitive values (API keys, tokens, secrets, passwords) are masked.
+    Read-only — no auth required.
+    """
+    groups = get_env_settings_groups(settings)
+    return {"groups": groups}
 
 
 @router.put("/settings", dependencies=[Depends(require_api_key)])
