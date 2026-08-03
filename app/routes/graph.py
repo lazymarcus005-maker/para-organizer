@@ -6,11 +6,17 @@ from app.graph import (
     find_path,
     get_clusters,
     get_cross_category_links,
+    get_full_graph,
     get_related,
     get_subgraph,
 )
 
 router = APIRouter(prefix="/api", tags=["graph"])
+
+
+@router.get("/graph")
+async def graph():
+    return await get_full_graph()
 
 
 @router.get("/notes/{note_id}/graph")
