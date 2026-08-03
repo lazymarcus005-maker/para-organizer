@@ -46,11 +46,11 @@ function renderGraph(nodes, edges) {
     const visNodes = new vis.DataSet(
         nodes.map(node => ({
             id: node.id,
-            label: truncateLabel(node.label, 20),
-            title: node.label,  // Tooltip on hover
-            size: Math.max(node.size, 15),
+            label: truncateLabel(node.title, 20),
+            title: node.title,  // Tooltip on hover
+            size: Math.max(node.size || 20, 15),
             color: {
-                background: categoryColors[node.category] || '#6b7280',
+                background: categoryColors[node.para_category] || '#6b7280',
                 border: '#1e293b',
                 highlight: {
                     background: '#fbbf24',
@@ -74,8 +74,8 @@ function renderGraph(nodes, edges) {
     // Transform edges with link type labels
     const visEdges = new vis.DataSet(
         edges.map(edge => ({
-            from: edge.from,
-            to: edge.to,
+            from: edge.from_id,
+            to: edge.to_id,
             label: edge.link_type,
             title: `${edge.link_type}`,
             arrows: 'to',

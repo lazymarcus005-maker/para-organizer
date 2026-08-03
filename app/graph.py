@@ -10,6 +10,45 @@ from app.database import get_connection
 logger = logging.getLogger("para.graph")
 
 
+async def get_full_graph() -> dict:
+    async with get_connection() as db:
+        cursor = await db.execute(
+            "SELECT id, title, para_category, status FROM notes",
+        )
+        note_rows = await cursor.fetchall()
+        nodes = [
+            {
+                "id": r["id"],
+                "title": r["title"],
+                "para_category": r["para_category"],
+                "status": r["status"],
+            }
+            for r in note_rows
+        ]
+
+        cursor = await db.execute(
+            "SELECT from_note_id, to_note_id, link_type FROM links",
+        )
+        link_rows = await cursor.fetchall()
+        edges = [
+            {
+                "from_id": r["from_note_id"],
+                "to_id": r["to_note_id"],
+                "link_type": r["link_type"],
+            }
+            for r in link_rows
+        ]
+
+        logger.info("get_full_graph nodes=%d edges=%d", len(nodes), len(edges))
+
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "node_count": len(nodes),
+            "edge_count": len(edges),
+        }
+
+
 async def get_subgraph(note_id: int, depth: int = 2) -> dict:
     async with get_connection() as db:
         cursor = await db.execute(
