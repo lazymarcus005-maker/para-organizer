@@ -4,6 +4,24 @@
 
 ---
 
+## 🚀 Deployment Strategy (GitHub Flow)
+
+This project deploys via **GitHub Flow**: merging a Pull Request into `main` is the deployment trigger.
+
+**Workflow:**
+
+1. Create a feature branch from `main`
+2. Implement and test your changes locally
+3. Open a Pull Request targeting `main`
+4. Review and test the PR
+5. Merge the PR into `main` → **this automatically deploys to production**
+
+There is no separate manual "release" step for normal changes — `main` is always the deployed state. Production runs at **https://para.mxlabs.cloud**, hosted on a Contabo VPS.
+
+The rest of this document covers the underlying Docker deployment mechanics (used by the automated deploy and available for manual/local use).
+
+---
+
 ## 📋 Prerequisites
 
 - Docker Desktop หรือ Docker Engine >= 20.10
