@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     # ─── Core ───
     PARA_PORT: int = 8731
     PARA_DB_PATH: str = str(Path(__file__).resolve().parent.parent / "data" / "para.db")
+    PARA_DB_URL: str = "postgresql+asyncpg://para:password@localhost:5432/para"
+    PARA_REDIS_URL: str = "redis://localhost:6379/0"
+    PARA_DB_POOL_SIZE: int = 10
+    PARA_DB_MAX_OVERFLOW: int = 20
+    PARA_REDIS_CACHE_TTL: int = 60
     PARA_SECRET_KEY: str = "change-me-in-production"
 
     # ─── LLM (Ollama Cloud) ───
