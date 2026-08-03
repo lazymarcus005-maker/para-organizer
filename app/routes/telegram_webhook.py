@@ -23,5 +23,22 @@ async def telegram_webhook(
         ):
             raise HTTPException(status_code=401, detail="Unauthorized")
     background_tasks.add_task(handle_update, update)
+    # Enqueue notify task via Redis task queue
+    try:
+        from app.task_queue import TaskQueue
+        import asyncio
+        asyncio.create_task(_enqueue_telegram_notify(update))
+    except Exception:
+        pass
     return {"ok": True}
+
+
+async def _enqueue_telegram_notify(update: dict) -> None:
+    """Enqueue a notify task for the Telegram update."""
+    try:
+        queue = TaskQueue()
+        await queue.publish("notify", {"update": update, "channel": "telegram"})
+        await queue.close()
+    except Exception:
+        pass
 

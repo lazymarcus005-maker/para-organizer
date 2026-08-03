@@ -16,7 +16,14 @@ router = APIRouter(prefix="/api", tags=["graph"])
 
 @router.get("/graph")
 async def graph():
-    return await get_full_graph()
+    from app.cache import get_cache
+    cache = get_cache()
+    cached = await cache.get("para:graph:full")
+    if cached is not None:
+        return cached
+    result = await get_full_graph()
+    await cache.set("para:graph:full", result, ttl=300)
+    return result
 
 
 @router.get("/notes/{note_id}/graph")
