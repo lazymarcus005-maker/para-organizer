@@ -93,6 +93,17 @@ async def create_note(payload: NoteCreate, db: aiosqlite.Connection = Depends(ge
         await _log_history(db, note_id, "classified", new_value=para_category, reason=llm_reasoning)
     await db.commit()
 
+    # Enqueue background tasks via Redis task queue
+    try:
+        from app.task_queue import TaskQueue
+        queue = TaskQueue()
+        await queue.publish("classify", {"note_id": note_id, "source": payload.source})
+        await queue.publish("embed", {"note_id": note_id})
+        await queue.publish("link", {"note_id": note_id})
+        await queue.close()
+    except Exception:
+        logger.warning("Failed to enqueue background tasks for note %s", note_id, exc_info=True)
+
     try:
         await index_note(db, note_id, payload.content)
     except Exception:

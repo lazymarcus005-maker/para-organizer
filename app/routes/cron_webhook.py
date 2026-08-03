@@ -85,6 +85,16 @@ async def create_note_from_cron(
     await db.commit()
     row = await (await db.execute("SELECT * FROM notes WHERE id = ?", (note_id,))).fetchone()
     note = row_to_note(row)
+
+    # Enqueue classify task via Redis task queue
+    try:
+        from app.task_queue import TaskQueue
+        queue = TaskQueue()
+        await queue.publish("classify", {"note_id": note_id, "source": payload.source})
+        await queue.close()
+    except Exception:
+        logger.warning("Failed to enqueue classify task for cron note %s", note_id, exc_info=True)
+
     try:
         related = await _hybrid_retrieve(payload.content, db)
         note["related_context"] = [

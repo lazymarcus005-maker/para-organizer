@@ -12,6 +12,11 @@ router = APIRouter(prefix="/api/para", tags=["para"])
 
 @router.get("/tree")
 async def para_tree(db: aiosqlite.Connection = Depends(get_db)):
+    from app.cache import get_cache
+    cache = get_cache()
+    cached = await cache.get("para:tree")
+    if cached is not None:
+        return cached
     tree = {}
     for category in PARA_CATEGORIES:
         cursor = await db.execute(
@@ -22,4 +27,6 @@ async def para_tree(db: aiosqlite.Connection = Depends(get_db)):
         notes = [row_to_note(r) for r in rows]
         tree[category] = {"count": len(notes), "notes": notes}
 
-    return {"categories": tree}
+    result = {"categories": tree}
+    await cache.set("para:tree", result, ttl=60)
+    return result

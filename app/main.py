@@ -1,4 +1,5 @@
 """FastAPI app entrypoint: routers, startup migrations, static files."""
+from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
@@ -7,6 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from app.cache import get_cache
 from app.database import init_db
 from app.routes import (
     agents,
@@ -30,7 +32,6 @@ from app.routes import (
     tasks,
     telegram_webhook,
 )
-from app.scheduler import scheduler
 
 logging.basicConfig(level=logging.INFO)
 
@@ -38,16 +39,15 @@ logging.basicConfig(level=logging.INFO)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
-    if not scheduler.running:
-        scheduler.start()
+    # Initialise cache singleton on startup
+    _ = get_cache()
     try:
         yield
     finally:
-        if scheduler.running:
-            scheduler.shutdown(wait=False)
+        pass
 
 
-app = FastAPI(title="PARA Organizer", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="PARA Organizer", version="5.0.0", lifespan=lifespan)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

@@ -20,6 +20,11 @@ async def get_usage(days: int = Query(default=7, ge=1, le=365)):
 
 @router.get("/stats")
 async def get_stats(db: aiosqlite.Connection = Depends(get_db)):
+    from app.cache import get_cache
+    cache = get_cache()
+    cached = await cache.get("para:stats")
+    if cached is not None:
+        return cached
     total_cursor = await db.execute("SELECT COUNT(*) AS c FROM notes")
     total_notes = (await total_cursor.fetchone())["c"]
 
@@ -47,7 +52,7 @@ async def get_stats(db: aiosqlite.Connection = Depends(get_db)):
     avg_row = await avg_cursor.fetchone()
     avg_confidence = round(avg_row["avg"], 3) if avg_row["avg"] is not None else 0.0
 
-    return {
+    result = {
         "total_notes": total_notes,
         "by_category": by_category,
         "by_status": by_status,
@@ -55,6 +60,8 @@ async def get_stats(db: aiosqlite.Connection = Depends(get_db)):
         "upcoming_deadlines": upcoming_deadlines,
         "avg_confidence": avg_confidence,
     }
+    await cache.set("para:stats", result, ttl=60)
+    return result
 
 
 @router.get("/deadlines")
@@ -62,6 +69,12 @@ async def get_deadlines(
     days: int = Query(default=14, ge=1, le=365),
     db: aiosqlite.Connection = Depends(get_db),
 ):
+    from app.cache import get_cache
+    cache = get_cache()
+    cache_key = f"para:deadlines:{days}"
+    cached = await cache.get(cache_key)
+    if cached is not None:
+        return cached
     horizon = (date.today() + timedelta(days=days)).isoformat()
     cursor = await db.execute(
         """
@@ -86,11 +99,20 @@ async def get_deadlines(
             "priority": row["priority"],
         })
 
-    return {"deadlines": deadlines}
+    result = {"deadlines": deadlines}
+    await cache.set(cache_key, result, ttl=120)
+    return result
 
 
 @router.get("/digest")
 async def get_digest(db: aiosqlite.Connection = Depends(get_db)):
+    from app.cache import get_cache
+    cache = get_cache()
+    from datetime import date as dt_date
+    cache_key = f"para:digest:{dt_date.today().isoformat()}"
+    cached = await cache.get(cache_key)
+    if cached is not None:
+        return cached
     week_ago = (datetime.now() - timedelta(days=7)).isoformat()
 
     total_cursor = await db.execute("SELECT COUNT(*) AS c FROM notes")
@@ -114,10 +136,12 @@ async def get_digest(db: aiosqlite.Connection = Depends(get_db)):
     new_cursor = await db.execute("SELECT COUNT(*) AS c FROM notes WHERE created_at >= ?", (week_ago,))
     new_notes_count = (await new_cursor.fetchone())["c"]
 
-    return {
+    result = {
         "total_notes": total_notes,
         "by_category": by_category,
         "completed_this_week": completed_this_week,
         "active_projects": active_projects,
         "new_notes_count": new_notes_count,
     }
+    await cache.set(cache_key, result, ttl=300)
+    return result
