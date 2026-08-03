@@ -32,34 +32,81 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for the full deployment guide, including prod
 
 ## Architecture
 
-PARA Organizer is a single FastAPI application backed by SQLite (WAL mode, FTS5, sqlite-vec) with no external database dependency. Notes come in via the Web UI, Telegram bot, a Hermes cron webhook, or direct MCP tool calls. An LLM (Ollama Cloud) classifies and tags each note, extracts deadlines, and powers chat/RAG features. APScheduler runs background jobs (reclassification, archiving, digests, embeddings) inside the same process.
+PARA Organizer v5 is a **distributed service** running on Docker with PostgreSQL, Redis, and async task workers. The monolith has been decomposed into horizontally-scalable services:
 
+```text
+Internet
+    │
+    ▼
+┌──────────────┐
+│  Traefik     │  ← SSL termination, rate limiting, path routing
+│  :443        │
+└──────┬───────┘
+       │
+       ├──────────────────────────────────────┐
+       ▼                                      ▼
+┌──────────────────┐            ┌──────────────────────┐
+│  para-app:8731   │  × N       │  para-mcp:8100       │  × N
+│  FastAPI         │            │  MCP HTTP SSE        │
+│  Stateless       │            │  Connection pool     │
+└────────┬─────────┘            └──────────┬───────────┘
+         │                                 │
+         └──────────────┬──────────────────┘
+                        ▼
+              ┌──────────────────┐
+              │  PostgreSQL      │  ← pgvector + tsvector
+              │  (pgvector/pg16) │
+              └──────────────────┘
+                        ▲
+              ┌──────────────────┐
+              │  Redis 7         │  ← Task queue + Cache
+              │  (queue + cache) │
+              └──────────────────┘
+
+┌──────────────────┐  ┌──────────────────┐
+│  para-worker     │  │  para-scheduler   │
+│  × N             │  │  (singleton)      │
+│  Consumes tasks  │  │  APScheduler      │
+│  from Redis      │  │  + Redis lock     │
+└──────────────────┘  └──────────────────┘
 ```
-Web UI / Telegram / Hermes (MCP or cron webhook)
-                │
-                ▼
-        FastAPI app (app/main.py)
-   ┌─────────┬──────────┬─────────────┐
-   │Classifier│Scheduler │ MCP server  │
-   │  (LLM)   │(APScheduler)│(stdio)   │
-   └─────────┴──────────┴─────────────┘
-                │
-                ▼
-     SQLite (WAL + FTS5 + sqlite-vec)
-```
+
+### Services
+
+| Service | Role | Replicas |
+|---------|------|----------|
+| **para-traefik** | Reverse proxy, SSL (Cloudflare), rate limiting | 1 |
+| **para-db** | PostgreSQL 16 + pgvector | 1 |
+| **para-redis** | Task queue + cache (Redis 7) | 1 |
+| **para-app** | FastAPI stateless app | 2+ |
+| **para-worker** | Background task consumer | 2+ |
+| **para-scheduler** | Cron job dispatcher (singleton via Redis lock) | 1 |
+| **para-mcp** | MCP HTTP SSE server (port 8100) | 2+ |
+| **para-backup** | Optional cloud backup | 1 |
+
+### Key Changes from v4
+
+- **SQLite → PostgreSQL**: Concurrent writes, pgvector for embeddings, tsvector for full-text search
+- **In-process scheduler → Standalone**: APScheduler runs in its own container with Redis singleton lock
+- **MCP stdio → HTTP SSE**: Connection pooling, no per-connection Python process spawn
+- **No cache → Redis cache**: Read-heavy endpoints cached with configurable TTL
+- **Background tasks → Redis task queue**: Durable, retryable, observable
+- **host network → overlay network**: Docker Swarm compatible, no port conflicts
 
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
 | API server | FastAPI + Uvicorn |
-| Database | SQLite (WAL mode, FTS5 full-text search, sqlite-vec for embeddings) |
+| Database | SQLite (WAL mode, FTS5, sqlite-vec) / PostgreSQL 16 + pgvector (v5) |
 | LLM | Ollama Cloud (`deepseek-v4-flash` primary, `gpt-oss:20b` fallback/chat) |
-| Scheduler | APScheduler |
+| Scheduler | APScheduler (in-process v4 / standalone v5) |
+| Task Queue | Redis 7 (v5) |
+| Cache | Redis 7 (v5) |
 | Bot | python-telegram-bot |
-| Agent integration | MCP (`mcp` Python SDK, stdio transport) |
+| Agent integration | MCP stdio (v4) / MCP HTTP SSE (v5) |
 | Templating | Jinja2 |
-| Containerization | Docker + docker-compose |
+| Containerization | Docker + docker-compose (Docker Swarm compatible) |
 | Testing | pytest + pytest-asyncio |
 
 ## Deployment
