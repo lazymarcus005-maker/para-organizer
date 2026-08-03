@@ -8,18 +8,25 @@ PARA Organizer is a self-hosted Second Brain system. Notes come in from the Web 
 
 ## Architecture
 
-- **`app/main.py`** — FastAPI app entrypoint; wires up routes and startup (DB init, scheduler)
+- **`app/main.py`** — FastAPI app entrypoint; wires up routes and startup (DB init, cache init)
 - **`app/database.py`** / **`app/models.py`** — SQLite schema (WAL mode, FTS5, sqlite-vec), PARA category definitions. Shared foundation — treat schema changes as high-impact.
+- **`app/database_v2.py`** / **`app/models_v2.py`** — SQLAlchemy async engine + ORM models for PostgreSQL (pgvector, tsvector). Used by the distributed deployment.
 - **`app/classifier.py`** — LLM-based classification, tagging, deadline extraction (Ollama Cloud, `deepseek-v4-flash`)
 - **`app/chat.py`** — conversational / hybrid RAG chat mode
-- **`app/scheduler.py`** — APScheduler jobs (reclassify, auto-archive, escalation, deadline reminders, stale detection, digests, weekly review, embedding backfill)
-- **`app/mcp/mcp_server.py`** — MCP server (stdio transport), 15 tools exposed to Hermes (`para_add_note`, `para_search`, `para_list`, `para_get`, `para_move`, `para_archive`, `para_stats`, `para_deadlines`, `para_digest`, `para_add_link`, `para_update`, and more)
+- **`app/scheduler.py`** — Legacy in-process APScheduler (v4). Replaced by `app/scheduler_service.py` in v5.
+- **`app/scheduler_service.py`** — Standalone APScheduler service with Redis singleton lock. Pushes jobs to Redis task queue.
+- **`app/task_queue.py`** — Redis-backed async task queue (8 topics: classify, embed, notify, link, distill, review, backup, escalate)
+- **`app/worker.py`** — Background worker process consuming from all Redis queue topics
+- **`app/cache.py`** — Redis cache layer with get/set/invalidate, used by read-heavy endpoints
+- **`app/mcp/mcp_server.py`** — MCP server (stdio transport), 15 tools exposed to Hermes
+- **`app/mcp/mcp_server_http.py`** — MCP HTTP SSE server (port 8100), same 15 tools, connection pooling
 - **`app/routes/`** — FastAPI routers for the REST API and Web UI pages
+- **`app/routes/health.py`** — Health check endpoints (`/api/health`, `/api/health/ready`, `/api/health/live`)
 - **`app/integrations/`** — Telegram bot (chat, voice STT, inline buttons)
 - **`app/embed.py`** / **`app/vector_store.py`** — embedding generation and semantic search
 - **`app/linker.py`**, **`app/distill.py`**, **`app/review.py`**, **`app/planner.py`**, **`app/graph.py`** — note linking, distillation, weekly review, action planning, relationship graph
 
-Everything runs in one FastAPI process — no separate workers, no message queue, no external database. See [agent_skill.md](agent_skill.md) for the detailed REST API + MCP integration reference (endpoints, auth, request/response shapes).
+In v4, everything runs in one FastAPI process. In v5, the app is decomposed into 8 Docker services (see README.md Architecture). See [agent_skill.md](agent_skill.md) for the detailed REST API + MCP integration reference (endpoints, auth, request/response shapes).
 
 ## Key Commands
 
@@ -38,6 +45,15 @@ pytest tests/test_classifier.py -v
 
 # Initialize / migrate the database
 python3 scripts/init_db.py
+
+# Run background worker (v5 distributed mode)
+python3 -m app.worker
+
+# Run standalone scheduler (v5 distributed mode)
+python3 -m app.scheduler_service
+
+# Run MCP HTTP SSE server (v5 distributed mode, port 8100)
+python3 -m app.mcp.mcp_server_http
 ```
 
 ## Code Standards

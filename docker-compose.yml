@@ -1,116 +1,354 @@
 version: '3.8'
 
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-healthcheck: &app-healthcheck
+  test: ["CMD", "curl", "-f", "http://localhost:8731/api/health/live"]
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 30s
+
 services:
-  # PARA Organizer FastAPI App
+  # ── Reverse Proxy ──────────────────────────────────────────────────────────
+  para-traefik:
+    image: traefik:v3.0
+    container_name: para-traefik
+    restart: unless-stopped
+    ports:
+      - "443:443"
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.swarmMode=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.cloudflare.acme.dnschallenge=true"
+      - "--certificatesresolvers.cloudflare.acme.dnschallenge.provider=cloudflare"
+      - "--certificatesresolvers.cloudflare.acme.email=admin@mxlabs.cloud"
+      - "--certificatesresolvers.cloudflare.acme.storage=/letsencrypt/acme.json"
+    environment:
+      - CF_API_EMAIL=${CF_API_EMAIL}
+      - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN}
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - traefik-data:/letsencrypt
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard.rule=Host(`traefik.para.mxlabs.cloud`)"
+      - "traefik.http.routers.dashboard.service=api@internal"
+      - "traefik.http.routers.dashboard.middlewares=auth"
+      - "traefik.http.middlewares.para-ratelimit.ratelimit.average=100"
+      - "traefik.http.middlewares.para-ratelimit.ratelimit.burst=200"
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+    networks:
+      - para-overlay
+    logging: *default-logging
+
+  # ── Database ──────────────────────────────────────────────────────────────
+  para-db:
+    image: pgvector/pgvector:pg16
+    container_name: para-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: para
+      POSTGRES_USER: para
+      POSTGRES_PASSWORD: ${PARA_DB_PASSWORD:-password}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U para -d para"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2"
+    networks:
+      - para-overlay
+    logging: *default-logging
+
+  # ── Redis ─────────────────────────────────────────────────────────────────
+  para-redis:
+    image: redis:7-alpine
+    container_name: para-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 512M
+    networks:
+      - para-overlay
+    logging: *default-logging
+
+  # ── FastAPI App ───────────────────────────────────────────────────────────
   para-app:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: para-organizer-app
+    container_name: para-app
     restart: unless-stopped
-    # host networking so the container can reach a local Ollama instance at
-    # localhost:11434 for embeddings (EMBED_BASE_URL); the app itself still
-    # binds directly to the host's 8731 (no "ports:"/"networks:" under host mode).
-    network_mode: host
+    depends_on:
+      para-db:
+        condition: service_healthy
+      para-redis:
+        condition: service_healthy
     environment:
-      # Core
       - PARA_PORT=8731
-      - PARA_DB_PATH=/var/lib/para-organizer/data/para.db
+      - PARA_DB_URL=postgresql+asyncpg://para:${PARA_DB_PASSWORD:-password}@para-db:5432/para
+      - PARA_REDIS_URL=redis://para-redis:6379/0
+      - PARA_DB_POOL_SIZE=${PARA_DB_POOL_SIZE:-10}
+      - PARA_DB_MAX_OVERFLOW=${PARA_DB_MAX_OVERFLOW:-20}
+      - PARA_REDIS_CACHE_TTL=${PARA_REDIS_CACHE_TTL:-60}
       - PARA_SECRET_KEY=${PARA_SECRET_KEY:-change-me-in-production}
-      
-      # LLM (Ollama Cloud)
       - OLLAMA_API_KEY=${OLLAMA_API_KEY}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-https://ollama.com/v1}
       - LLM_PRIMARY=${LLM_PRIMARY:-deepseek-v4-flash}
       - LLM_FALLBACK=${LLM_FALLBACK:-gpt-oss:20b}
       - LLM_TIMEOUT=${LLM_TIMEOUT:-60}
       - LLM_MAX_RETRIES=${LLM_MAX_RETRIES:-2}
-      
-      # Telegram
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_WEBHOOK_URL=${TELEGRAM_WEBHOOK_URL}
       - TELEGRAM_ALLOWED_USERS=${TELEGRAM_ALLOWED_USERS}
-      
-      # Notification
       - NOTIFY_CHANNEL=${NOTIFY_CHANNEL:-telegram}
       - NOTIFY_DEADLINE_DAYS=${NOTIFY_DEADLINE_DAYS:-7,3,1}
       - NOTIFY_DIGEST_DAY=${NOTIFY_DIGEST_DAY:-mon}
       - NOTIFY_DIGEST_TIME=${NOTIFY_DIGEST_TIME:-08:00}
       - NOTIFY_STALE_DAYS=${NOTIFY_STALE_DAYS:-14}
-      
-      # Auto
       - AUTO_ARCHIVE_DAYS=${AUTO_ARCHIVE_DAYS:-30}
       - RECLASSIFY_INTERVAL_HOURS=${RECLASSIFY_INTERVAL_HOURS:-6}
       - RECLASSIFY_CONFIDENCE_THRESHOLD=${RECLASSIFY_CONFIDENCE_THRESHOLD:-0.7}
-      
-      # Web
-      - WEB_PUBLIC_URL=${WEB_PUBLIC_URL:-http://localhost:8731}
-
-      # Embeddings (hybrid RAG)
+      - WEB_PUBLIC_URL=${WEB_PUBLIC_URL:-https://para.mxlabs.cloud}
       - EMBED_PROVIDER=${EMBED_PROVIDER:-ollama_local}
       - EMBED_BASE_URL=${EMBED_BASE_URL:-http://localhost:11434}
       - EMBED_MODEL=${EMBED_MODEL:-nomic-embed-text}
-      - EMBED_API_KEY=${EMBED_API_KEY}
       - RAG_HYBRID_ENABLED=${RAG_HYBRID_ENABLED:-true}
       - RAG_HYBRID_RATIO=${RAG_HYBRID_RATIO:-0.5}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8731/api/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 512M
+    networks:
+      - para-overlay
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.para-app.rule=Host(`para.mxlabs.cloud`)"
+      - "traefik.http.routers.para-app.entrypoints=websecure"
+      - "traefik.http.routers.para-app.tls.certresolver=cloudflare"
+      - "traefik.http.services.para-app.loadbalancer.server.port=8731"
+      - "traefik.http.routers.para-app.middlewares=para-ratelimit"
+    logging: *default-logging
 
-    volumes:
-      # Data persistence
-      - para-data:/var/lib/para-organizer/data
-      # Optional: Mount source for development
-      # - ./app:/app/app
-      # - ./scripts:/app/scripts
-
-    depends_on:
-      - para-init
-    
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  # Database initialization service
-  para-init:
+  # ── Background Worker ─────────────────────────────────────────────────────
+  para-worker:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: para-organizer-init
-    command: python3 scripts/init_db.py
+    container_name: para-worker
+    restart: unless-stopped
+    command: python3 -m app.worker
+    depends_on:
+      para-db:
+        condition: service_healthy
+      para-redis:
+        condition: service_healthy
     environment:
-      - PARA_DB_PATH=/var/lib/para-organizer/data/para.db
-    volumes:
-      - para-data:/var/lib/para-organizer/data
+      - PARA_DB_URL=postgresql+asyncpg://para:${PARA_DB_PASSWORD:-password}@para-db:5432/para
+      - PARA_REDIS_URL=redis://para-redis:6379/0
+      - PARA_DB_POOL_SIZE=${PARA_DB_POOL_SIZE:-10}
+      - PARA_DB_MAX_OVERFLOW=${PARA_DB_MAX_OVERFLOW:-20}
+      - PARA_REDIS_CACHE_TTL=${PARA_REDIS_CACHE_TTL:-60}
+      - PARA_SECRET_KEY=${PARA_SECRET_KEY:-change-me-in-production}
+      - OLLAMA_API_KEY=${OLLAMA_API_KEY}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-https://ollama.com/v1}
+      - LLM_PRIMARY=${LLM_PRIMARY:-deepseek-v4-flash}
+      - LLM_FALLBACK=${LLM_FALLBACK:-gpt-oss:20b}
+      - LLM_TIMEOUT=${LLM_TIMEOUT:-60}
+      - LLM_MAX_RETRIES=${LLM_MAX_RETRIES:-2}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - NOTIFY_CHANNEL=${NOTIFY_CHANNEL:-telegram}
+      - NOTIFY_DEADLINE_DAYS=${NOTIFY_DEADLINE_DAYS:-7,3,1}
+      - NOTIFY_DIGEST_DAY=${NOTIFY_DIGEST_DAY:-mon}
+      - NOTIFY_DIGEST_TIME=${NOTIFY_DIGEST_TIME:-08:00}
+      - NOTIFY_STALE_DAYS=${NOTIFY_STALE_DAYS:-14}
+      - AUTO_ARCHIVE_DAYS=${AUTO_ARCHIVE_DAYS:-30}
+      - RECLASSIFY_INTERVAL_HOURS=${RECLASSIFY_INTERVAL_HOURS:-6}
+      - RECLASSIFY_CONFIDENCE_THRESHOLD=${RECLASSIFY_CONFIDENCE_THRESHOLD:-0.7}
+      - EMBED_PROVIDER=${EMBED_PROVIDER:-ollama_local}
+      - EMBED_BASE_URL=${EMBED_BASE_URL:-http://localhost:11434}
+      - EMBED_MODEL=${EMBED_MODEL:-nomic-embed-text}
+      - RAG_HYBRID_ENABLED=${RAG_HYBRID_ENABLED:-true}
+      - RAG_HYBRID_RATIO=${RAG_HYBRID_RATIO:-0.5}
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 512M
     networks:
-      - para-network
-    # This runs once and exits
-    restart: "no"
+      - para-overlay
+    logging: *default-logging
 
-  # Optional: Nginx reverse proxy (uncomment to enable)
-  # para-nginx:
-  #   image: nginx:alpine
-  #   container_name: para-organizer-nginx
-  #   restart: unless-stopped
-  #   ports:
-  #     - "80:80"
-  #     - "443:443"
-  #   volumes:
-  #     - ./nginx.conf:/etc/nginx/nginx.conf:ro
-  #     - ./certs:/etc/nginx/certs:ro
-  #   depends_on:
-  #     - para-app
-  #   networks:
-  #     - para-network
-  #   logging:
-  #     driver: "json-file"
-  #     options:
-  #       max-size: "10m"
-  #       max-file: "3"
+  # ── Scheduler (Singleton) ────────────────────────────────────────────────
+  para-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: para-scheduler
+    restart: unless-stopped
+    command: python3 -m app.scheduler_service
+    depends_on:
+      para-db:
+        condition: service_healthy
+      para-redis:
+        condition: service_healthy
+    environment:
+      - PARA_DB_URL=postgresql+asyncpg://para:${PARA_DB_PASSWORD:-password}@para-db:5432/para
+      - PARA_REDIS_URL=redis://para-redis:6379/0
+      - PARA_DB_POOL_SIZE=${PARA_DB_POOL_SIZE:-10}
+      - PARA_DB_MAX_OVERFLOW=${PARA_DB_MAX_OVERFLOW:-20}
+      - PARA_REDIS_CACHE_TTL=${PARA_REDIS_CACHE_TTL:-60}
+      - PARA_SECRET_KEY=${PARA_SECRET_KEY:-change-me-in-production}
+      - OLLAMA_API_KEY=${OLLAMA_API_KEY}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-https://ollama.com/v1}
+      - LLM_PRIMARY=${LLM_PRIMARY:-deepseek-v4-flash}
+      - LLM_FALLBACK=${LLM_FALLBACK:-gpt-oss:20b}
+      - LLM_TIMEOUT=${LLM_TIMEOUT:-60}
+      - LLM_MAX_RETRIES=${LLM_MAX_RETRIES:-2}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - NOTIFY_CHANNEL=${NOTIFY_CHANNEL:-telegram}
+      - NOTIFY_DEADLINE_DAYS=${NOTIFY_DEADLINE_DAYS:-7,3,1}
+      - NOTIFY_DIGEST_DAY=${NOTIFY_DIGEST_DAY:-mon}
+      - NOTIFY_DIGEST_TIME=${NOTIFY_DIGEST_TIME:-08:00}
+      - NOTIFY_STALE_DAYS=${NOTIFY_STALE_DAYS:-14}
+      - AUTO_ARCHIVE_DAYS=${AUTO_ARCHIVE_DAYS:-30}
+      - RECLASSIFY_INTERVAL_HOURS=${RECLASSIFY_INTERVAL_HOURS:-6}
+      - RECLASSIFY_CONFIDENCE_THRESHOLD=${RECLASSIFY_CONFIDENCE_THRESHOLD:-0.7}
+      - EMBED_PROVIDER=${EMBED_PROVIDER:-ollama_local}
+      - EMBED_BASE_URL=${EMBED_BASE_URL:-http://localhost:11434}
+      - EMBED_MODEL=${EMBED_MODEL:-nomic-embed-text}
+      - RAG_HYBRID_ENABLED=${RAG_HYBRID_ENABLED:-true}
+      - RAG_HYBRID_RATIO=${RAG_HYBRID_RATIO:-0.5}
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 256M
+    networks:
+      - para-overlay
+    logging: *default-logging
+
+  # ── MCP HTTP SSE Server ──────────────────────────────────────────────────
+  para-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: para-mcp
+    restart: unless-stopped
+    command: python3 -m app.mcp.mcp_server_http
+    depends_on:
+      para-db:
+        condition: service_healthy
+    environment:
+      - PARA_DB_URL=postgresql+asyncpg://para:${PARA_DB_PASSWORD:-password}@para-db:5432/para
+      - PARA_DB_POOL_SIZE=${PARA_DB_POOL_SIZE:-10}
+      - PARA_DB_MAX_OVERFLOW=${PARA_DB_MAX_OVERFLOW:-20}
+      - PARA_SECRET_KEY=${PARA_SECRET_KEY:-change-me-in-production}
+      - OLLAMA_API_KEY=${OLLAMA_API_KEY}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-https://ollama.com/v1}
+      - LLM_PRIMARY=${LLM_PRIMARY:-deepseek-v4-flash}
+      - LLM_FALLBACK=${LLM_FALLBACK:-gpt-oss:20b}
+      - LLM_TIMEOUT=${LLM_TIMEOUT:-60}
+      - LLM_MAX_RETRIES=${LLM_MAX_RETRIES:-2}
+      - EMBED_PROVIDER=${EMBED_PROVIDER:-ollama_local}
+      - EMBED_BASE_URL=${EMBED_BASE_URL:-http://localhost:11434}
+      - EMBED_MODEL=${EMBED_MODEL:-nomic-embed-text}
+      - RAG_HYBRID_ENABLED=${RAG_HYBRID_ENABLED:-true}
+      - RAG_HYBRID_RATIO=${RAG_HYBRID_RATIO:-0.5}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8100/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 256M
+    networks:
+      - para-overlay
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.para-mcp.rule=Host(`mcp.para.mxlabs.cloud`)"
+      - "traefik.http.routers.para-mcp.entrypoints=websecure"
+      - "traefik.http.routers.para-mcp.tls.certresolver=cloudflare"
+      - "traefik.http.services.para-mcp.loadbalancer.server.port=8100"
+    logging: *default-logging
+
+  # ── Backup (Optional) ──────────────────────────────────────────────────────
+  para-backup:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: para-backup
+    restart: unless-stopped
+    command: python3 -m app.scheduler_service --backup-only
+    depends_on:
+      para-db:
+        condition: service_healthy
+    environment:
+      - PARA_DB_URL=postgresql+asyncpg://para:${PARA_DB_PASSWORD:-password}@para-db:5432/para
+      - PARA_SECRET_KEY=${PARA_SECRET_KEY:-change-me-in-production}
+      - BACKUP_CLOUD_ENABLED=${BACKUP_CLOUD_ENABLED:-false}
+      - BACKUP_CLOUD_ENDPOINT=${BACKUP_CLOUD_ENDPOINT}
+      - BACKUP_CLOUD_BUCKET=${BACKUP_CLOUD_BUCKET}
+      - BACKUP_CLOUD_ACCESS_KEY=${BACKUP_CLOUD_ACCESS_KEY}
+      - BACKUP_CLOUD_SECRET_KEY=${BACKUP_CLOUD_SECRET_KEY}
+      - BACKUP_CLOUD_RETENTION_DAYS=${BACKUP_CLOUD_RETENTION_DAYS:-30}
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 256M
+    networks:
+      - para-overlay
+    logging: *default-logging
 
 volumes:
-  para-data:
+  pgdata:
+    driver: local
+  redis-data:
+    driver: local
+  traefik-data:
     driver: local
 
 networks:
-  para-network:
-    driver: bridge
+  para-overlay:
+    driver: overlay
+    attachable: true

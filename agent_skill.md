@@ -196,9 +196,9 @@ curl -X POST http://localhost:8731/api/notes/cron \
 
 ## 4. MCP Server (Hermes native)
 
-Agent ที่รันบน Hermes เรียก PARA ผ่าน MCP tools ได้โดยตรง — **ไม่ต้องใช้ HTTP/token** (คุยกับ SQLite ตรงๆ)
+Agent ที่รันบน Hermes เรียก PARA ผ่าน MCP tools ได้ 2 ช่องทาง:
 
-### 4.1 ติดตั้งใน `~/.hermes/config.yaml`
+### 4.1 ช่องทางที่ 1: MCP stdio (v4, local development)
 ```yaml
 mcp:
   servers:
@@ -211,7 +211,16 @@ mcp:
 ```
 > รัน `cwd` ที่ repo root หรือใส่ absolute path ใน args
 
-### 4.2 MCP Tools ที่มี
+### 4.2 ช่องทางที่ 2: MCP HTTP SSE (v5, production)
+```yaml
+mcp:
+  servers:
+    para-organizer:
+      url: "https://mcp.para.mxlabs.cloud/mcp/sse"
+```
+> ใช้ HTTP SSE transport — connection pooling, scale-out ได้, ไม่ต้อง spawn process ใหม่ทุก connection
+
+### 4.3 MCP Tools ที่มี
 
 | Tool | Signature | ทำอะไร |
 |------|-----------|--------|
@@ -229,7 +238,7 @@ mcp:
 - ทุก tool คืน dict/list ที่ JSON-serialize ได้
 - error (not found / invalid) คืน `{"error": "..."}` — server ไม่ crash
 
-### 4.3 ตัวอย่าง (natural language ผ่าน Hermes)
+### 4.4 ตัวอย่าง (natural language ผ่าน Hermes)
 ```
 "เพิ่มโน้ตลง PARA: ประชุมทีม พรุ่งนี้ 10 โมง"   → para_add_note
 "หาโน้ตเรื่อง deadline ในโปรเจกต์"              → para_search
