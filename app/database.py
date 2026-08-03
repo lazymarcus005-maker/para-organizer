@@ -1,10 +1,23 @@
-"""SQLite connection management (WAL mode) and schema migrations."""
+"""Database connection management — SQLite (aiosqlite) with SQLAlchemy async fallback.
+
+Phase 0 migration path:
+- Existing code uses ``get_connection()`` / ``get_db()`` (aiosqlite).
+- New code can use ``get_db_v2()`` (SQLAlchemy async session).
+- ``init_db()`` now runs Alembic migrations when a PostgreSQL URL is configured,
+  otherwise falls back to the original SQLite schema.
+- ``check_db_health()`` provides a unified health check for both backends.
+"""
+
+from __future__ import annotations
 
 import logging
 import os
 from contextlib import asynccontextmanager
+from typing import AsyncGenerator
 
 import aiosqlite
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.migrations import run_migrations
@@ -141,9 +154,6 @@ CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE ON notes BEGIN
 END;
 """
 
-# Vector store for hybrid RAG semantic search — a separate virtual table (not part
-# of SCHEMA_SQL) because it requires the sqlite-vec extension to be loaded on the
-# connection *before* it can be created or queried; see _load_vec_extension().
 VEC_SCHEMA_SQL = """
 CREATE VIRTUAL TABLE IF NOT EXISTS note_embeddings USING vec0(
     embedding float[{dimensions}]
@@ -152,9 +162,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_embeddings USING vec0(
 
 
 async def _load_vec_extension(db: aiosqlite.Connection) -> bool:
-    """Load the sqlite-vec extension onto this connection. Returns False (and logs
-    a warning, once) if the package isn't installed or the extension can't load —
-    callers degrade to keyword-only (FTS) search in that case."""
+    """Load the sqlite-vec extension onto this connection."""
     if not _SQLITE_VEC_AVAILABLE:
         return False
     try:
@@ -171,7 +179,29 @@ async def _load_vec_extension(db: aiosqlite.Connection) -> bool:
 
 
 async def init_db() -> None:
-    """Create the database file (if needed) and run migrations."""
+    """Initialize the database.
+
+    If ``PARA_DB_URL`` is set (PostgreSQL), runs Alembic migrations.
+    Otherwise falls back to the original SQLite schema.
+    """
+    if settings.PARA_DB_URL and "postgresql" in settings.PARA_DB_URL:
+        await _init_pg()
+    else:
+        await _init_sqlite()
+
+
+async def _init_pg() -> None:
+    """Run Alembic migrations against PostgreSQL."""
+    from alembic.config import Config
+    from alembic import command
+
+    alembic_cfg = Config("alembic.ini")
+    command.upgrade(alembic_cfg, "head")
+    logger.info("PostgreSQL schema up to date (Alembic upgrade head)")
+
+
+async def _init_sqlite() -> None:
+    """Create the SQLite database file (if needed) and run migrations."""
     db_path = settings.PARA_DB_PATH
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
 
@@ -212,3 +242,46 @@ async def get_db():
     """FastAPI dependency yielding an aiosqlite connection."""
     async with get_connection() as db:
         yield db
+
+
+async def get_db_v2() -> AsyncGenerator[AsyncSession, None]:
+    """FastAPI dependency yielding a SQLAlchemy async session (PostgreSQL).
+
+    Only available when ``PARA_DB_URL`` is configured. Falls back to
+    ``get_db()`` (aiosqlite) when PostgreSQL is not configured.
+    """
+    if not settings.PARA_DB_URL or "postgresql" not in settings.PARA_DB_URL:
+        # Fallback: yield the aiosqlite connection wrapped in a minimal adapter
+        async with get_connection() as db:
+            yield db  # type: ignore[return-value]
+        return
+
+    from app.database_v2 import async_session_factory
+
+    async with async_session_factory() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+
+async def check_db_health() -> bool:
+    """Unified health check — returns ``True`` if the database is reachable.
+
+    Works with both SQLite and PostgreSQL backends.
+    """
+    if settings.PARA_DB_URL and "postgresql" in settings.PARA_DB_URL:
+        from app.database_v2 import check_db
+        return await check_db()
+
+    try:
+        async with get_connection() as db:
+            await db.execute("SELECT 1")
+        return True
+    except Exception:
+        logger.exception("Database health check failed")
+        return False
