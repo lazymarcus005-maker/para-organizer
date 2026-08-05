@@ -16,6 +16,10 @@ def _is_ollama() -> bool:
     return settings.EMBED_PROVIDER.startswith("ollama")
 
 
+def _is_local() -> bool:
+    return settings.EMBED_PROVIDER == "local"
+
+
 def _embed_endpoint() -> str:
     if _is_ollama():
         return f"{settings.EMBED_BASE_URL}/api/embed"
@@ -29,7 +33,17 @@ def _embed_headers() -> dict[str, str]:
 
 
 async def embed_text(text: str) -> list[float] | None:
-    """Embed a single string. Never raises — returns None on any failure."""
+    """Embed a single string. Never raises — returns None on any failure.
+
+    Supports three providers:
+    - ``local`` → sentence-transformers via ``app.embed_local``
+    - ``ollama*`` → Ollama /api/embed
+    - anything else → OpenAI-compatible /v1/embeddings
+    """
+    if _is_local():
+        from app.embed_local import embed_text as _local_embed
+        return await _local_embed(text)
+
     payload = {"model": settings.EMBED_MODEL, "input": text}
 
     try:
