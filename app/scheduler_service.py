@@ -110,7 +110,7 @@ def _make_jobs(scheduler: AsyncIOScheduler) -> None:
     scheduler.add_job(
         _push_job,
         CronTrigger(hour=2, minute=0),
-        args=["archive", {}],
+        args=["classify", {"source": "auto_archive"}],
         id="auto_archive",
         name="Auto-archive stale notes",
         replace_existing=True,
@@ -173,7 +173,7 @@ def _make_jobs(scheduler: AsyncIOScheduler) -> None:
     scheduler.add_job(
         _push_job,
         CronTrigger(hour=6, minute=0),
-        args=["autonomy", {}],
+        args=["escalate", {"source": "autonomy"}],
         id="autonomous_tasks",
         name="Autonomous task generation",
         replace_existing=True,

@@ -89,6 +89,7 @@ class Note(Base):
     archived_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # ── Relationships ──
     links_from: Mapped[list["Link"]] = relationship(

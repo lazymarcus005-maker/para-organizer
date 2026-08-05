@@ -87,7 +87,7 @@ TABLES: list[tuple[str, str, list[str], Callable | None]] = [
         "id", "title", "content", "para_category", "sub_category", "status",
         "priority", "deadline", "tags", "source", "source_metadata",
         "llm_model", "llm_confidence", "llm_reasoning", "embedding_status",
-        "recurrence", "created_at", "updated_at", "archived_at",
+        "recurrence", "created_at", "updated_at", "archived_at", "summary",
     ], _transform_note),
     ("links", "links", [
         "id", "from_note_id", "to_note_id", "link_type", "created_at",

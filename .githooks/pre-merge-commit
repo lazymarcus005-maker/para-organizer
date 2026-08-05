@@ -1,0 +1,19 @@
+#!/bin/bash
+# Git hook: ป้องกันการ merge branch features/upgrade เข้า main
+# ติดตั้ง: cp .githooks/pre-merge-commit .git/hooks/pre-merge-commit && chmod +x .git/hooks/pre-merge-commit
+
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+MERGING_BRANCH=$(git log -1 --pretty=%s 2>/dev/null | grep -oP 'Merge branch '\''\K[^'\'']+' || echo "")
+
+if [ "$CURRENT_BRANCH" = "main" ] && echo "$MERGING_BRANCH" | grep -q "features/upgrade"; then
+    echo ""
+    echo "🚫 BLOCKED: ห้าม merge features/upgrade เข้า main เด็ดขาด!"
+    echo "    features/upgrade คือ experimental branch สำหรับ PostgreSQL + Redis + Worker stack"
+    echo "    main คือ production branch ที่รันอยู่จริง (SQLite)"
+    echo ""
+    echo "    ถ้าต้องการ deploy สิ่งที่ทำบน features/upgrade:"
+    echo "    1. cherry-pick หรือ rebase ผ่าน branch ใหม่"
+    echo "    2. หรือรอ decision จากคุณท่านก่อน"
+    echo ""
+    exit 1
+fi

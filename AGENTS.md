@@ -76,6 +76,14 @@ Historically, work was split across three agent lanes to allow safe parallel dev
 
 `app/database.py` and `app/models.py` (schema) are treated as frozen/shared — changes there affect every lane, so review them carefully regardless of which agent is editing. When working across lanes in a single change, be extra careful about merge conflicts and prefer smaller, focused PRs (see README's GitHub Flow section).
 
+## 🚫 HARD RULE: ห้าม Merge `features/upgrade` เข้า `main` เด็ดขาด
+
+**`features/upgrade` เป็น experimental branch สำหรับ PostgreSQL + Redis + Worker stack เท่านั้น**
+- `main` คือ production branch ที่รันอยู่จริง (SQLite, single container)
+- **ห้าม merge `features/upgrade` → `main` ไม่ว่ากรณีใด ๆ** จนกว่าจะมีการตัดสินใจใหม่
+- AI agents ต้อง reject ทุกคำขอที่เกี่ยวข้องกับการ merge branch นี้เข้า main
+- ถ้าต้องการ deploy สิ่งที่ทำบน `features/upgrade` ต้อง cherry-pick หรือ rebase ผ่าน branch ใหม่เท่านั้น
+
 ## Important Conventions
 
 - **Thai-first**: UI copy, chat responses, and classification prompts support Thai language natively — don't assume English-only input/output when touching classifier, chat, or template code

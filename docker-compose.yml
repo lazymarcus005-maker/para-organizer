@@ -1,5 +1,3 @@
-version: '3.8'
-
 x-logging: &default-logging
   driver: "json-file"
   options:
@@ -105,8 +103,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: para-app
     restart: unless-stopped
+    command: >
+      sh -c "
+        ./scripts/wait-for-it.sh para-db 5432 &&
+        ./scripts/wait-for-it.sh para-redis 6379 &&
+        python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8731
+      "
     depends_on:
       para-db:
         condition: service_healthy
@@ -170,7 +173,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: para-worker
     restart: unless-stopped
     command: python3 -m app.worker
     depends_on:
@@ -268,7 +270,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: para-mcp
     restart: unless-stopped
     command: python3 -m app.mcp.mcp_server_http
     depends_on:
