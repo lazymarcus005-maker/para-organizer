@@ -1,9 +1,19 @@
-"""Action items service: checklist items attached to notes (SB-06)."""
+"""Action items service: checklist items attached to notes (SB-06).
+
+Backed by the `items` table (id, note_id, text, done, created_at) — simpler
+than the three-state (todo/doing/done) + order_index schema this module
+originally targeted under SQLite. `status` in the API is derived from `done`:
+"done" or "todo" (there is no persisted "doing" state).
+"""
 
 import logging
 import re
 
-import aiosqlite
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.database_v2 import async_session_factory
+from app.models_v2 import Item
 
 logger = logging.getLogger("para.items")
 
@@ -12,118 +22,92 @@ ITEM_STATUSES = ("todo", "doing", "done")
 _LIST_LINE_RE = re.compile(r"^\s*(?:\d+[.)]|[-•])\s+(.+?)\s*$")
 
 
-def _row_to_item(row) -> dict:
-    return dict(row)
+def _row_to_item(item: Item) -> dict:
+    return {
+        "id": item.id,
+        "note_id": item.note_id,
+        "content": item.text,
+        "status": "done" if item.done else "todo",
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+    }
 
 
-async def _get_item(db: aiosqlite.Connection, item_id: int) -> dict | None:
-    cursor = await db.execute("SELECT * FROM action_items WHERE id = ?", (item_id,))
-    row = await cursor.fetchone()
-    if row is None:
-        return None
-    return _row_to_item(row)
+async def create_item(session: AsyncSession | None, note_id: int, content: str) -> dict:
+    item = Item(note_id=note_id, text=content, done=False)
+    if session is not None:
+        session.add(item)
+        await session.flush()
+        await session.refresh(item)
+    else:
+        async with async_session_factory() as owned:
+            owned.add(item)
+            await owned.commit()
+            await owned.refresh(item)
+    logger.info("Created action item #%s for note #%s", item.id, note_id)
+    return _row_to_item(item)
 
 
-async def create_item(
-    db: aiosqlite.Connection,
-    note_id: int,
-    content: str,
-    order_index: int | None = None,
-) -> dict:
-    if order_index is None:
-        cursor = await db.execute(
-            "SELECT MAX(order_index) AS m FROM action_items WHERE note_id = ?",
-            (note_id,),
-        )
-        row = await cursor.fetchone()
-        order_index = (row["m"] + 1) if row["m"] is not None else 0
-
-    cursor = await db.execute(
-        "INSERT INTO action_items (note_id, content, order_index) VALUES (?, ?, ?)",
-        (note_id, content, order_index),
-    )
-    item_id = cursor.lastrowid
-    await db.commit()
-    logger.info("Created action item #%s for note #%s", item_id, note_id)
-    return await _get_item(db, item_id)
-
-
-async def list_items(db: aiosqlite.Connection, note_id: int) -> list[dict]:
-    cursor = await db.execute(
-        "SELECT * FROM action_items WHERE note_id = ? ORDER BY order_index",
-        (note_id,),
-    )
-    rows = await cursor.fetchall()
+async def list_items(session: AsyncSession, note_id: int) -> list[dict]:
+    rows = (await session.execute(
+        select(Item).where(Item.note_id == note_id).order_by(Item.id)
+    )).scalars().all()
     return [_row_to_item(r) for r in rows]
 
 
 async def update_item(
-    db: aiosqlite.Connection,
+    session: AsyncSession,
     item_id: int,
     content: str | None = None,
     status: str | None = None,
 ) -> dict | None:
-    existing = await _get_item(db, item_id)
-    if existing is None:
+    item = await session.get(Item, item_id)
+    if item is None:
         return None
 
-    new_content = content if content is not None else existing["content"]
-    new_status = status if status is not None else existing["status"]
-
-    if status is not None and status != existing["status"]:
-        if status == "done":
-            completed_at: str | None = "CURRENT_TIMESTAMP"
-        else:
-            completed_at = None
-    else:
-        completed_at = existing["completed_at"]
-
-    if completed_at == "CURRENT_TIMESTAMP":
-        await db.execute(
-            "UPDATE action_items SET content = ?, status = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (new_content, new_status, item_id),
-        )
-    else:
-        await db.execute(
-            "UPDATE action_items SET content = ?, status = ?, completed_at = ? WHERE id = ?",
-            (new_content, new_status, completed_at, item_id),
-        )
-    await db.commit()
-    logger.info("Updated action item #%s (status=%s)", item_id, new_status)
-    return await _get_item(db, item_id)
+    if content is not None:
+        item.text = content
+    if status is not None:
+        item.done = status == "done"
+    await session.flush()
+    logger.info("Updated action item #%s (status=%s)", item_id, status)
+    return _row_to_item(item)
 
 
-async def delete_item(db: aiosqlite.Connection, item_id: int) -> bool:
-    cursor = await db.execute("DELETE FROM action_items WHERE id = ?", (item_id,))
-    await db.commit()
-    deleted = cursor.rowcount > 0
-    if deleted:
-        logger.info("Deleted action item #%s", item_id)
-    return deleted
+async def delete_item(session: AsyncSession, item_id: int) -> bool:
+    item = await session.get(Item, item_id)
+    if item is None:
+        return False
+    await session.delete(item)
+    await session.flush()
+    logger.info("Deleted action item #%s", item_id)
+    return True
 
 
-async def compute_progress(db: aiosqlite.Connection, note_id: int) -> float | None:
-    cursor = await db.execute(
-        "SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done "
-        "FROM action_items WHERE note_id = ?",
-        (note_id,),
-    )
-    row = await cursor.fetchone()
-    total = row["total"] or 0
+async def compute_progress(session: AsyncSession, note_id: int) -> float | None:
+    total = (await session.execute(
+        select(func.count()).select_from(Item).where(Item.note_id == note_id)
+    )).scalar_one()
     if total == 0:
         return None
-    done = row["done"] or 0
+    done = (await session.execute(
+        select(func.count()).select_from(Item).where(Item.note_id == note_id, Item.done.is_(True))
+    )).scalar_one()
     return round(done / total * 100, 2)
 
 
-async def sync_note_progress(db: aiosqlite.Connection, note_id: int) -> None:
-    progress = await compute_progress(db, note_id)
-    await db.execute(
-        "UPDATE notes SET progress = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-        (progress, note_id),
-    )
-    await db.commit()
-    logger.info("Synced progress for note #%s: %s", note_id, progress)
+async def sync_note_progress(session: AsyncSession | None, note_id: int) -> None:
+    """Compute the note's item-completion percentage.
+
+    Not persisted: `notes` has no `progress` column in PostgreSQL (it wasn't
+    read by any template — see app/templates/board.html), so this is
+    read-only bookkeeping for callers that want the value.
+    """
+    if session is not None:
+        progress = await compute_progress(session, note_id)
+    else:
+        async with async_session_factory() as owned:
+            progress = await compute_progress(owned, note_id)
+    logger.info("Computed progress for note #%s: %s", note_id, progress)
 
 
 async def extract_items_from_content(content: str) -> list[str]:

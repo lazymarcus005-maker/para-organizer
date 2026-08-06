@@ -1,11 +1,11 @@
 """Semantic auto-linking — after a note is created, find the most similar
-existing notes (via the sqlite-vec embedding store) and create `related` links.
+existing notes (via pgvector) and create `related` links.
 
 Similarity is the normalized score returned by app.vector_store.semantic_search
 (derived from L2 distance, in the range (0.0, 1.0], higher = more similar), so a
 `similarity_threshold` of 0.7 keeps only reasonably close neighbors. All functions
-are best-effort: if embeddings are unavailable (provider down, vec0 table absent),
-they return an empty result / create no links rather than raising.
+are best-effort: if embeddings are unavailable (provider down, no notes embedded
+yet), they return an empty result / create no links rather than raising.
 """
 
 from __future__ import annotations
@@ -13,22 +13,24 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-import aiosqlite
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_connection
+from app.database_v2 import async_session_factory
 from app.embed import embed_text
+from app.models_v2 import History, Link, Note
 from app.vector_store import semantic_search
 
 logger = logging.getLogger("para.linker")
 
 
 @asynccontextmanager
-async def _connection(db: aiosqlite.Connection | None):
-    """Yield the caller-supplied connection, or open a short-lived one."""
-    if db is not None:
-        yield db
+async def _session(session: AsyncSession | None):
+    """Yield the caller-supplied session, or open a short-lived one."""
+    if session is not None:
+        yield session
     else:
-        async with get_connection() as owned:
+        async with async_session_factory() as owned:
             yield owned
 
 
@@ -36,7 +38,7 @@ async def suggest_links(
     note_id: int,
     similarity_threshold: float = 0.7,
     top_k: int = 3,
-    db: aiosqlite.Connection | None = None,
+    db: AsyncSession | None = None,
 ) -> list[dict]:
     """Find semantically similar notes via embedding similarity.
 
@@ -47,20 +49,18 @@ async def suggest_links(
     Returns [] if the note doesn't exist, has no embeddable content, or the
     embedding/vector store is unavailable.
     """
-    async with _connection(db) as conn:
-        row = await (await conn.execute(
-            "SELECT content FROM notes WHERE id = ?", (note_id,)
-        )).fetchone()
-        if row is None:
+    async with _session(db) as session:
+        note = await session.get(Note, note_id)
+        if note is None:
             return []
 
-        embedding = await embed_text(row["content"])
+        embedding = await embed_text(note.content)
         if embedding is None:
             return []
 
         # Fetch one extra to leave room for excluding the note itself, which
         # will normally be the closest match to its own embedding.
-        matches = await semantic_search(conn, embedding, limit=top_k + 1)
+        matches = await semantic_search(session, embedding, limit=top_k + 1)
 
         results: list[dict] = []
         for match_id, similarity in matches:
@@ -68,13 +68,13 @@ async def suggest_links(
                 continue
             if similarity < similarity_threshold:
                 continue
-            title_row = await (await conn.execute(
-                "SELECT title FROM notes WHERE id = ?", (match_id,)
-            )).fetchone()
+            title = (await session.execute(
+                select(Note.title).where(Note.id == match_id)
+            )).scalar_one_or_none()
             results.append({
                 "note_id": match_id,
                 "similarity": similarity,
-                "title": title_row["title"] if title_row else None,
+                "title": title,
             })
             if len(results) >= top_k:
                 break
@@ -82,7 +82,7 @@ async def suggest_links(
 
 
 async def auto_link_note(
-    db: aiosqlite.Connection,
+    session: AsyncSession | None,
     note_id: int,
     similarity_threshold: float = 0.7,
     top_k: int = 3,
@@ -94,33 +94,33 @@ async def auto_link_note(
     the number of links created. Never raises — embedding failures yield 0.
     """
     try:
-        suggestions = await suggest_links(note_id, similarity_threshold, top_k, db=db)
+        suggestions = await suggest_links(note_id, similarity_threshold, top_k, db=session)
     except Exception:
         logger.warning("suggest_links failed for note %s", note_id, exc_info=True)
         return 0
 
-    created = 0
-    for suggestion in suggestions:
-        other_id = suggestion["note_id"]
-        existing = await (await db.execute(
-            """SELECT 1 FROM links
-               WHERE (from_note_id = ? AND to_note_id = ?)
-                  OR (from_note_id = ? AND to_note_id = ?)
-               LIMIT 1""",
-            (note_id, other_id, other_id, note_id),
-        )).fetchone()
-        if existing:
-            continue
-        await db.execute(
-            "INSERT INTO links (from_note_id, to_note_id, link_type) VALUES (?, ?, 'related')",
-            (note_id, other_id),
-        )
-        created += 1
+    async with _session(session) as db:
+        created = 0
+        for suggestion in suggestions:
+            other_id = suggestion["note_id"]
+            existing = (await db.execute(
+                select(Link.id).where(
+                    ((Link.from_note_id == note_id) & (Link.to_note_id == other_id))
+                    | ((Link.from_note_id == other_id) & (Link.to_note_id == note_id))
+                ).limit(1)
+            )).scalar_one_or_none()
+            if existing is not None:
+                continue
+            db.add(Link(from_note_id=note_id, to_note_id=other_id, link_type="related"))
+            created += 1
 
-    if created:
-        await db.execute(
-            "INSERT INTO history (note_id, action, new_value, reason) VALUES (?, ?, ?, ?)",
-            (note_id, "auto_linked", str(created), f"auto-linked to {created} notes"),
-        )
-    await db.commit()
-    return created
+        if created:
+            db.add(History(
+                note_id=note_id, action="auto_linked",
+                new_value=str(created), reason=f"auto-linked to {created} notes",
+            ))
+        if session is None:
+            await db.commit()
+        else:
+            await db.flush()
+        return created

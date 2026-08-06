@@ -2,22 +2,25 @@
 
 from pathlib import Path
 
-import aiosqlite
 from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database import get_db
+from app.database_v2 import get_db as get_pg_db
 from app.health import compute_health
 from app.models import PARA_CATEGORIES, NoteCreate
+from app.models_v2 import Note
 from app.routes.backup import list_backup_files
-from app.routes.notes import create_note as api_create_note
 from app.routes.para import para_tree as api_para_tree
-from app.routes.search import search_notes as api_search_notes
-from app.routes.settings import get_settings_dict
+from app.routes_v2 import (
+    _fetch_note,
+    create_note as api_create_note,
+    get_settings_dict,
+    search_notes as api_search_notes,
+)
 from app.routes.stats import get_stats as api_get_stats
-from app.utils import row_to_note
 
 router = APIRouter(tags=["pages"])
 
@@ -28,8 +31,8 @@ KANBAN_CATEGORIES = ["projects", "areas", "resources", "archives"]
 
 
 @router.get("/")
-async def index(request: Request, db: aiosqlite.Connection = Depends(get_db)):
-    tree = await api_para_tree(db)
+async def index(request: Request, session: AsyncSession = Depends(get_pg_db)):
+    tree = await api_para_tree(session)
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -38,26 +41,29 @@ async def index(request: Request, db: aiosqlite.Connection = Depends(get_db)):
 
 
 @router.get("/board")
-async def board_page(request: Request, db: aiosqlite.Connection = Depends(get_db)):
+async def board_page(request: Request):
     return templates.TemplateResponse(request, "board.html", {})
 
 
 @router.get("/partials/board")
-async def board_partial(request: Request, db: aiosqlite.Connection = Depends(get_db)):
-    tree = await api_para_tree(db)
+async def board_partial(request: Request, session: AsyncSession = Depends(get_pg_db)):
+    tree = await api_para_tree(session)
     return templates.TemplateResponse(
         request, "_board.html", {"tree": tree["categories"], "columns": KANBAN_CATEGORIES}
     )
 
 
 @router.get("/notes/{note_id}")
-async def note_detail(request: Request, note_id: int, db: aiosqlite.Connection = Depends(get_db)):
-    cursor = await db.execute("SELECT * FROM notes WHERE id = ?", (note_id,))
-    row = await cursor.fetchone()
-    note = row_to_note(row) if row else None
+async def note_detail(request: Request, note_id: int, session: AsyncSession = Depends(get_pg_db)):
+    note = None
+    status_code = 404
+    existing = await session.get(Note, note_id)
+    if existing is not None:
+        note = await _fetch_note(session, note_id)
+        status_code = 200
     return templates.TemplateResponse(
         request, "note_detail.html", {"note": note, "categories": PARA_CATEGORIES},
-        status_code=200 if note else 404,
+        status_code=status_code,
     )
 
 
@@ -70,28 +76,28 @@ async def new_note_form(request: Request):
 async def create_note_from_form(
     title: str = Form(...),
     content: str = Form(...),
-    db: aiosqlite.Connection = Depends(get_db),
+    session: AsyncSession = Depends(get_pg_db),
 ):
     payload = NoteCreate(title=title, content=content, source="manual", auto_classify=True)
-    note = await api_create_note(payload, db)
+    note = await api_create_note(payload, session)
     return RedirectResponse(url=f"/notes/{note['id']}", status_code=303)
 
 
 @router.get("/stats")
-async def stats_page(request: Request, db: aiosqlite.Connection = Depends(get_db)):
-    stats = await api_get_stats(db)
+async def stats_page(request: Request):
+    stats = await api_get_stats()
     return templates.TemplateResponse(request, "stats.html", {"stats": stats})
 
 
 @router.get("/search")
-async def search_page(request: Request, q: str = Query(default=""), db: aiosqlite.Connection = Depends(get_db)):
-    results = await api_search_notes(q=q, limit=20, db=db) if q else {"results": [], "total": 0}
+async def search_page(request: Request, q: str = Query(default=""), session: AsyncSession = Depends(get_pg_db)):
+    results = await api_search_notes(q=q, limit=20, offset=0, session=session) if q else {"results": [], "total": 0}
     return templates.TemplateResponse(request, "search.html", {"query": q, "results": results["results"]})
 
 
 @router.get("/settings")
-async def settings_page(request: Request, db: aiosqlite.Connection = Depends(get_db)):
-    settings_values = await get_settings_dict(db)
+async def settings_page(request: Request, session: AsyncSession = Depends(get_pg_db)):
+    settings_values = await get_settings_dict(session)
     backups = list_backup_files()
     return templates.TemplateResponse(
         request,

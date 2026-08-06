@@ -319,6 +319,9 @@ class Feedback(Base):
     __tablename__ = "feedback"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    note_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("notes.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     field: Mapped[str] = mapped_column(String, nullable=False)
     llm_value: Mapped[str] = mapped_column(String, nullable=False)
     user_value: Mapped[str] = mapped_column(String, nullable=False)

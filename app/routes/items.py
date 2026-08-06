@@ -2,10 +2,10 @@
 
 import logging
 
-import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
+from app.database_v2 import get_db as get_pg_db
 from app.items import (
     ITEM_STATUSES,
     create_item,
@@ -16,57 +16,56 @@ from app.items import (
     update_item,
 )
 from app.models import ItemCreate, ItemUpdate
-from app.routes.notes import require_api_key
+from app.models_v2 import Item, Note
+from app.routes_v2 import require_api_key
 
 logger = logging.getLogger("para.routes.items")
 router = APIRouter(prefix="/api", tags=["items"])
 
 
 @router.get("/notes/{note_id}/items")
-async def list_items_endpoint(note_id: int, db: aiosqlite.Connection = Depends(get_db)):
-    items = await list_items(db, note_id)
+async def list_items_endpoint(note_id: int, session: AsyncSession = Depends(get_pg_db)):
+    items = await list_items(session, note_id)
     return {"items": items}
 
 
 @router.post("/notes/{note_id}/items", dependencies=[Depends(require_api_key)])
-async def create_item_endpoint(note_id: int, payload: ItemCreate, db: aiosqlite.Connection = Depends(get_db)):
-    item = await create_item(db, note_id, payload.content)
-    await sync_note_progress(db, note_id)
+async def create_item_endpoint(note_id: int, payload: ItemCreate, session: AsyncSession = Depends(get_pg_db)):
+    item = await create_item(session, note_id, payload.content)
+    await sync_note_progress(session, note_id)
     return item
 
 
 @router.put("/items/{item_id}", dependencies=[Depends(require_api_key)])
-async def update_item_endpoint(item_id: int, payload: ItemUpdate, db: aiosqlite.Connection = Depends(get_db)):
+async def update_item_endpoint(item_id: int, payload: ItemUpdate, session: AsyncSession = Depends(get_pg_db)):
     if payload.status is not None and payload.status not in ITEM_STATUSES:
         raise HTTPException(status_code=422, detail=f"Invalid status: {payload.status}")
-    item = await update_item(db, item_id, content=payload.content, status=payload.status)
+    item = await update_item(session, item_id, content=payload.content, status=payload.status)
     if item is None:
         raise HTTPException(status_code=404, detail="Item not found")
-    await sync_note_progress(db, item["note_id"])
+    await sync_note_progress(session, item["note_id"])
     return item
 
 
 @router.delete("/items/{item_id}", dependencies=[Depends(require_api_key)])
-async def delete_item_endpoint(item_id: int, db: aiosqlite.Connection = Depends(get_db)):
-    cursor = await db.execute("SELECT note_id FROM action_items WHERE id = ?", (item_id,))
-    row = await cursor.fetchone()
-    if row is None:
+async def delete_item_endpoint(item_id: int, session: AsyncSession = Depends(get_pg_db)):
+    item = await session.get(Item, item_id)
+    if item is None:
         raise HTTPException(status_code=404, detail="Item not found")
-    note_id = row["note_id"]
-    await delete_item(db, item_id)
-    await sync_note_progress(db, note_id)
+    note_id = item.note_id
+    await delete_item(session, item_id)
+    await sync_note_progress(session, note_id)
     return {"deleted": item_id}
 
 
 @router.post("/notes/{note_id}/items/extract", dependencies=[Depends(require_api_key)])
-async def extract_items_endpoint(note_id: int, db: aiosqlite.Connection = Depends(get_db)):
-    cursor = await db.execute("SELECT content FROM notes WHERE id = ?", (note_id,))
-    row = await cursor.fetchone()
-    if row is None:
+async def extract_items_endpoint(note_id: int, session: AsyncSession = Depends(get_pg_db)):
+    note = await session.get(Note, note_id)
+    if note is None:
         raise HTTPException(status_code=404, detail="Note not found")
 
-    extracted = await extract_items_from_content(row["content"])
-    created = [await create_item(db, note_id, text) for text in extracted]
+    extracted = await extract_items_from_content(note.content)
+    created = [await create_item(session, note_id, text) for text in extracted]
     if created:
-        await sync_note_progress(db, note_id)
+        await sync_note_progress(session, note_id)
     return {"items": created, "items_created": len(created)}

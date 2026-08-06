@@ -1,15 +1,16 @@
 """Outbound event bus: persist events and dispatch them to a webhook (SB-01)."""
 
 import asyncio
-import json
 import logging
 from datetime import datetime, timezone
 
-import aiosqlite
 import httpx
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database import get_connection
+from app.database_v2 import async_session_factory
+from app.models_v2 import Event
 
 logger = logging.getLogger("para.events")
 
@@ -19,15 +20,13 @@ def enabled_event_types() -> set[str]:
 
 
 async def _set_status(event_id: int, status: str) -> None:
-    async with get_connection() as db:
-        if status == "delivered":
-            await db.execute(
-                "UPDATE events SET status = ?, delivered_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (status, event_id),
-            )
-        else:
-            await db.execute("UPDATE events SET status = ? WHERE id = ?", (status, event_id))
-        await db.commit()
+    async with async_session_factory() as session:
+        event = await session.get(Event, event_id)
+        if event is not None:
+            event.status = status
+            if status == "delivered":
+                event.delivered_at = datetime.now(timezone.utc)
+        await session.commit()
 
 
 async def dispatch_event(event_id: int, event_type: str, payload: dict) -> bool:
@@ -38,13 +37,11 @@ async def dispatch_event(event_id: int, event_type: str, payload: dict) -> bool:
 
     note_id = None
     timestamp = datetime.now(timezone.utc).isoformat()
-    async with get_connection() as db:
-        row = await (await db.execute(
-            "SELECT note_id, created_at FROM events WHERE id = ?", (event_id,)
-        )).fetchone()
-        if row is not None:
-            note_id = row["note_id"]
-            timestamp = row["created_at"] or timestamp
+    async with async_session_factory() as session:
+        event = await session.get(Event, event_id)
+        if event is not None:
+            note_id = event.note_id
+            timestamp = event.created_at.isoformat() if event.created_at else timestamp
 
     body = {
         "event_type": event_type,
@@ -77,18 +74,25 @@ async def dispatch_event(event_id: int, event_type: str, payload: dict) -> bool:
     return False
 
 
-async def emit_event(db: aiosqlite.Connection, event_type: str, note_id: int | None = None,
+async def emit_event(session: AsyncSession | None, event_type: str, note_id: int | None = None,
                      payload: dict | None = None) -> int | None:
+    """Persist an event. Uses `session` if given (participates in the caller's
+    transaction, not yet committed), otherwise opens and commits its own."""
     if event_type not in enabled_event_types():
         return None
 
     payload = payload or {}
-    cursor = await db.execute(
-        "INSERT INTO events (event_type, note_id, payload, status) VALUES (?, ?, ?, 'pending')",
-        (event_type, note_id, json.dumps(payload, ensure_ascii=False)),
-    )
-    event_id = cursor.lastrowid
-    await db.commit()
+    event = Event(event_type=event_type, note_id=note_id, payload=payload, status="pending")
+
+    if session is not None:
+        session.add(event)
+        await session.commit()
+        event_id = event.id
+    else:
+        async with async_session_factory() as owned:
+            owned.add(event)
+            await owned.commit()
+            event_id = event.id
 
     if settings.EVENT_WEBHOOK_URL:
         try:

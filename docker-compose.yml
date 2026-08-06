@@ -12,33 +12,6 @@ x-healthcheck: &app-healthcheck
   start_period: 30s
 
 services:
-  # ── Database ──────────────────────────────────────────────────────────────
-  para-db:
-    image: pgvector/pgvector:pg16
-    container_name: para-db
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: para
-      POSTGRES_USER: para
-      POSTGRES_PASSWORD: ${PARA_DB_PASSWORD:-password}
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U para -d para"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    deploy:
-      replicas: 1
-      resources:
-        limits:
-          memory: 2G
-          cpus: "2"
-    networks:
-      - para-overlay
-    logging: *default-logging
-
   # ── Redis ─────────────────────────────────────────────────────────────────
   para-redis:
     image: redis:7-alpine
@@ -69,13 +42,10 @@ services:
     restart: unless-stopped
     command: >
       sh -c "
-        ./scripts/wait-for-it.sh para-db 5432 &&
         ./scripts/wait-for-it.sh para-redis 6379 &&
         python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8731
       "
     depends_on:
-      para-db:
-        condition: service_healthy
       para-redis:
         condition: service_healthy
     ports:
@@ -145,8 +115,6 @@ services:
     restart: unless-stopped
     command: python3 -m app.worker
     depends_on:
-      para-db:
-        condition: service_healthy
       para-redis:
         condition: service_healthy
     environment:
@@ -197,8 +165,6 @@ services:
     restart: unless-stopped
     command: python3 -m app.scheduler_service
     depends_on:
-      para-db:
-        condition: service_healthy
       para-redis:
         condition: service_healthy
     environment:
@@ -247,9 +213,6 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     command: python3 -m app.mcp.mcp_server_http
-    depends_on:
-      para-db:
-        condition: service_healthy
     environment:
       - PARA_DB_URL=postgresql+asyncpg://paradb:paradb%231234@marcusx13db-paradb-dsco9m:5432/paradb
       - PARA_DB_POOL_SIZE=${PARA_DB_POOL_SIZE:-10}

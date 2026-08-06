@@ -65,8 +65,10 @@ async def _fetch_note(session: AsyncSession, note_id: int) -> dict:
     note = result.scalar_one_or_none()
     if note is None:
         raise HTTPException(status_code=404, detail="Note not found")
+    confidence = float(note.llm_confidence or 0.0)
     return {
         "id": note.id,
+        "review_needed": note.llm_model is not None and confidence < settings.RECLASSIFY_CONFIDENCE_THRESHOLD,
         "title": note.title,
         "content": note.content,
         "para_category": note.para_category,
@@ -483,6 +485,23 @@ SETTINGS_KEYS: dict[str, type] = {
     "EMBED_PROVIDER": str, "EMBED_BASE_URL": str, "EMBED_MODEL": str,
     "RAG_HYBRID_ENABLED": _cast_bool, "RAG_HYBRID_RATIO": float, "RAG_SEARCH_LIMIT": int,
 }
+
+
+async def get_settings_dict(session: AsyncSession) -> dict:
+    """Flat {KEY: cast_value} view of settings — DB override falling back to
+    the env-configured default. Used for server-rendered pages."""
+    result = await session.execute(select(Setting))
+    db_settings = {row.key: row.value for row in result.scalars().all()}
+    out: dict = {}
+    for key, cast in SETTINGS_KEYS.items():
+        if key in db_settings:
+            try:
+                out[key] = cast(db_settings[key])
+                continue
+            except (ValueError, TypeError):
+                pass
+        out[key] = getattr(settings, key)
+    return out
 
 
 @settings_router.get("/settings")
