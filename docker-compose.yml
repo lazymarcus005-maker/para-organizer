@@ -260,9 +260,6 @@ services:
     container_name: para-backup
     restart: unless-stopped
     command: python3 -m app.scheduler_service --backup-only
-    depends_on:
-      para-db:
-        condition: service_healthy
     environment:
       - PARA_DB_URL=postgresql+asyncpg://paradb:paradb%231234@marcusx13db-paradb-dsco9m:5432/paradb
       - PARA_REDIS_URL=redis://para-redis:6379/0
