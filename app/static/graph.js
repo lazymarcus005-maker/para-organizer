@@ -44,13 +44,16 @@ function renderGraph(nodes, edges) {
     
     // Transform nodes with category-based colors
     const visNodes = new vis.DataSet(
-        nodes.map(node => ({
+        nodes.map(node => {
+            const title = node.label || node.title || `Note ${node.id}`;
+            const category = node.category || node.para_category;
+            return {
             id: node.id,
-            label: truncateLabel(node.title, 20),
-            title: node.title,  // Tooltip on hover
+            label: truncateLabel(title, 20),
+            title: title,  // Tooltip on hover
             size: Math.max(node.size || 20, 15),
             color: {
-                background: categoryColors[node.para_category] || '#6b7280',
+                background: categoryColors[category] || '#6b7280',
                 border: '#1e293b',
                 highlight: {
                     background: '#fbbf24',
@@ -68,16 +71,17 @@ function renderGraph(nodes, edges) {
             },
             borderWidth: 2,
             borderWidthSelected: 3,
-        }))
+            };
+        })
     );
     
     // Transform edges with link type labels
     const visEdges = new vis.DataSet(
         edges.map(edge => ({
-            from: edge.from_id,
-            to: edge.to_id,
-            label: edge.link_type,
-            title: `${edge.link_type}`,
+            from: edge.from ?? edge.from_id,
+            to: edge.to ?? edge.to_id,
+            label: edge.label || edge.link_type,
+            title: `${edge.label || edge.link_type}`,
             arrows: 'to',
             smooth: {
                 type: 'continuous',
@@ -154,6 +158,9 @@ function renderGraph(nodes, edges) {
  * Truncate label to prevent long titles from breaking the layout.
  */
 function truncateLabel(label, maxLength) {
+    if (!label) {
+        return '';
+    }
     if (label.length > maxLength) {
         return label.substring(0, maxLength) + '...';
     }
