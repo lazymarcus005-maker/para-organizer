@@ -52,7 +52,7 @@ services:
       - "8731:8731"
     environment:
       - PARA_PORT=8731
-      - PARA_DB_URL=postgresql+asyncpg://paradb:paradb%231234@marcusx13db-paradb-dsco9m:5432/paradb
+      - PARA_DB_URL=postgresql+asyncpg://paradb:paradb%231234@169.58.65.88:5436/paradb
       - PARA_REDIS_URL=redis://para-redis:6379/0
       - PARA_DB_POOL_SIZE=${PARA_DB_POOL_SIZE:-10}
       - PARA_DB_MAX_OVERFLOW=${PARA_DB_MAX_OVERFLOW:-20}
@@ -118,7 +118,7 @@ services:
       para-redis:
         condition: service_healthy
     environment:
-      - PARA_DB_URL=postgresql+asyncpg://paradb:paradb%231234@marcusx13db-paradb-dsco9m:5432/paradb
+      - PARA_DB_URL=postgresql+asyncpg://paradb:paradb%231234@169.58.65.88:5436/paradb
       - PARA_REDIS_URL=redis://para-redis:6379/0
       - PARA_DB_POOL_SIZE=${PARA_DB_POOL_SIZE:-10}
       - PARA_DB_MAX_OVERFLOW=${PARA_DB_MAX_OVERFLOW:-20}
@@ -168,7 +168,7 @@ services:
       para-redis:
         condition: service_healthy
     environment:
-      - PARA_DB_URL=postgresql+asyncpg://paradb:paradb%231234@marcusx13db-paradb-dsco9m:5432/paradb
+      - PARA_DB_URL=postgresql+asyncpg://paradb:paradb%231234@169.58.65.88:5436/paradb
       - PARA_REDIS_URL=redis://para-redis:6379/0
       - PARA_DB_POOL_SIZE=${PARA_DB_POOL_SIZE:-10}
       - PARA_DB_MAX_OVERFLOW=${PARA_DB_MAX_OVERFLOW:-20}
@@ -214,7 +214,7 @@ services:
     restart: unless-stopped
     command: python3 -m app.mcp.mcp_server_http
     environment:
-      - PARA_DB_URL=postgresql+asyncpg://paradb:paradb%231234@marcusx13db-paradb-dsco9m:5432/paradb
+      - PARA_DB_URL=postgresql+asyncpg://paradb:paradb%231234@169.58.65.88:5436/paradb
       - PARA_DB_POOL_SIZE=${PARA_DB_POOL_SIZE:-10}
       - PARA_DB_MAX_OVERFLOW=${PARA_DB_MAX_OVERFLOW:-20}
       - PARA_SECRET_KEY=${PARA_SECRET_KEY:-change-me-in-production}
@@ -261,7 +261,7 @@ services:
     restart: unless-stopped
     command: python3 -m app.scheduler_service --backup-only
     environment:
-      - PARA_DB_URL=postgresql+asyncpg://paradb:paradb%231234@marcusx13db-paradb-dsco9m:5432/paradb
+      - PARA_DB_URL=postgresql+asyncpg://paradb:paradb%231234@169.58.65.88:5436/paradb
       - PARA_REDIS_URL=redis://para-redis:6379/0
       - PARA_SECRET_KEY=${PARA_SECRET_KEY:-change-me-in-production}
       - BACKUP_CLOUD_ENABLED=${BACKUP_CLOUD_ENABLED:-false}
