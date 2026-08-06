@@ -122,13 +122,8 @@ async def handle_embed(payload: dict[str, Any]) -> None:
             await session.commit()
             return
 
-        # Store embedding via raw SQL for pgvector
-        await session.execute(
-            sa_text(
-                "UPDATE notes SET embedding = :embedding::vector(768), "
-                "embedding_status = 'done' WHERE id = :note_id"
-            ).bindparams(embedding=embedding, note_id=note_id)
-        )
+        note.embedding = embedding
+        note.embedding_status = "done"
         await session.commit()
         logger.info("Note %s embedded (%d dimensions)", note_id, len(embedding))
 
@@ -219,10 +214,10 @@ async def handle_link(payload: dict[str, Any]) -> None:
         embedding_str = "[" + ",".join(str(v) for v in embedding) + "]"
         rows = await session.execute(
             sa_text(
-                """SELECT id, 1 - (embedding <=> :embedding::vector(768)) AS similarity
+                """SELECT id, 1 - (embedding <=> CAST(:embedding AS vector(768))) AS similarity
                    FROM notes
                    WHERE id != :note_id AND embedding IS NOT NULL
-                   ORDER BY embedding <=> :embedding2::vector(768)
+                   ORDER BY embedding <=> CAST(:embedding2 AS vector(768))
                    LIMIT :limit"""
             ).bindparams(
                 embedding=embedding_str,
