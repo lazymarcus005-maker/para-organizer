@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     # ─── Core ───
     PARA_PORT: int = 8731
     PARA_DB_PATH: str = str(Path(__file__).resolve().parent.parent / "data" / "para.db")
-    PARA_DB_URL: str = "postgresql+asyncpg://para:password@localhost:5432/para"
+    PARA_DB_URL: str = "postgresql+asyncpg://paradb:paradb%231234@marcusx13db-paradb-dsco9m:5432/paradb"
     PARA_REDIS_URL: str = "redis://localhost:6379/0"
     PARA_DB_POOL_SIZE: int = 10
     PARA_DB_MAX_OVERFLOW: int = 20
@@ -78,7 +78,7 @@ class Settings(BaseSettings):
     RECLASSIFY_CONFIDENCE_THRESHOLD: float = 0.7
 
     # ─── Web ───
-    WEB_PUBLIC_URL: str = "http://localhost:8731"
+    WEB_PUBLIC_URL: str = "https://sbrain.mxlabs.com"
 
     # ─── Chat ───
     CHAT_MODEL: str = "gpt-oss:20b"

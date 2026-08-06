@@ -115,9 +115,11 @@ services:
         condition: service_healthy
       para-redis:
         condition: service_healthy
+    ports:
+      - "8731:8731"
     environment:
       - PARA_PORT=8731
-      - PARA_DB_URL=postgresql+asyncpg://para:${PARA_DB_PASSWORD:-password}@para-db:5432/para
+      - PARA_DB_URL=postgresql+asyncpg://paradb:paradb%231234@marcusx13db-paradb-dsco9m:5432/paradb
       - PARA_REDIS_URL=redis://para-redis:6379/0
       - PARA_DB_POOL_SIZE=${PARA_DB_POOL_SIZE:-10}
       - PARA_DB_MAX_OVERFLOW=${PARA_DB_MAX_OVERFLOW:-20}
@@ -153,12 +155,13 @@ services:
       retries: 3
       start_period: 30s
     deploy:
-      replicas: 2
+      replicas: 1
       resources:
         limits:
           memory: 512M
     networks:
       - para-overlay
+      - dokploy-network
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.para-app.rule=Host(`para.mxlabs.cloud`)"
@@ -181,7 +184,7 @@ services:
       para-redis:
         condition: service_healthy
     environment:
-      - PARA_DB_URL=postgresql+asyncpg://para:${PARA_DB_PASSWORD:-password}@para-db:5432/para
+      - PARA_DB_URL=postgresql+asyncpg://paradb:paradb%231234@marcusx13db-paradb-dsco9m:5432/paradb
       - PARA_REDIS_URL=redis://para-redis:6379/0
       - PARA_DB_POOL_SIZE=${PARA_DB_POOL_SIZE:-10}
       - PARA_DB_MAX_OVERFLOW=${PARA_DB_MAX_OVERFLOW:-20}
@@ -207,6 +210,8 @@ services:
       - EMBED_MODEL=${EMBED_MODEL:-nomic-embed-text}
       - RAG_HYBRID_ENABLED=${RAG_HYBRID_ENABLED:-true}
       - RAG_HYBRID_RATIO=${RAG_HYBRID_RATIO:-0.5}
+    healthcheck:
+      disable: true
     deploy:
       replicas: 2
       resources:
@@ -214,6 +219,7 @@ services:
           memory: 512M
     networks:
       - para-overlay
+      - dokploy-network
     logging: *default-logging
 
   # ── Scheduler (Singleton) ────────────────────────────────────────────────
@@ -230,7 +236,7 @@ services:
       para-redis:
         condition: service_healthy
     environment:
-      - PARA_DB_URL=postgresql+asyncpg://para:${PARA_DB_PASSWORD:-password}@para-db:5432/para
+      - PARA_DB_URL=postgresql+asyncpg://paradb:paradb%231234@marcusx13db-paradb-dsco9m:5432/paradb
       - PARA_REDIS_URL=redis://para-redis:6379/0
       - PARA_DB_POOL_SIZE=${PARA_DB_POOL_SIZE:-10}
       - PARA_DB_MAX_OVERFLOW=${PARA_DB_MAX_OVERFLOW:-20}
@@ -256,6 +262,8 @@ services:
       - EMBED_MODEL=${EMBED_MODEL:-nomic-embed-text}
       - RAG_HYBRID_ENABLED=${RAG_HYBRID_ENABLED:-true}
       - RAG_HYBRID_RATIO=${RAG_HYBRID_RATIO:-0.5}
+    healthcheck:
+      disable: true
     deploy:
       replicas: 1
       resources:
@@ -263,6 +271,7 @@ services:
           memory: 256M
     networks:
       - para-overlay
+      - dokploy-network
     logging: *default-logging
 
   # ── MCP HTTP SSE Server ──────────────────────────────────────────────────
@@ -276,7 +285,7 @@ services:
       para-db:
         condition: service_healthy
     environment:
-      - PARA_DB_URL=postgresql+asyncpg://para:${PARA_DB_PASSWORD:-password}@para-db:5432/para
+      - PARA_DB_URL=postgresql+asyncpg://paradb:paradb%231234@marcusx13db-paradb-dsco9m:5432/paradb
       - PARA_DB_POOL_SIZE=${PARA_DB_POOL_SIZE:-10}
       - PARA_DB_MAX_OVERFLOW=${PARA_DB_MAX_OVERFLOW:-20}
       - PARA_SECRET_KEY=${PARA_SECRET_KEY:-change-me-in-production}
@@ -304,6 +313,7 @@ services:
           memory: 256M
     networks:
       - para-overlay
+      - dokploy-network
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.para-mcp.rule=Host(`mcp.para.mxlabs.cloud`)"
@@ -324,7 +334,8 @@ services:
       para-db:
         condition: service_healthy
     environment:
-      - PARA_DB_URL=postgresql+asyncpg://para:${PARA_DB_PASSWORD:-password}@para-db:5432/para
+      - PARA_DB_URL=postgresql+asyncpg://paradb:paradb%231234@marcusx13db-paradb-dsco9m:5432/paradb
+      - PARA_REDIS_URL=redis://para-redis:6379/0
       - PARA_SECRET_KEY=${PARA_SECRET_KEY:-change-me-in-production}
       - BACKUP_CLOUD_ENABLED=${BACKUP_CLOUD_ENABLED:-false}
       - BACKUP_CLOUD_ENDPOINT=${BACKUP_CLOUD_ENDPOINT}
@@ -332,6 +343,8 @@ services:
       - BACKUP_CLOUD_ACCESS_KEY=${BACKUP_CLOUD_ACCESS_KEY}
       - BACKUP_CLOUD_SECRET_KEY=${BACKUP_CLOUD_SECRET_KEY}
       - BACKUP_CLOUD_RETENTION_DAYS=${BACKUP_CLOUD_RETENTION_DAYS:-30}
+    healthcheck:
+      disable: true
     deploy:
       replicas: 1
       resources:
@@ -339,6 +352,7 @@ services:
           memory: 256M
     networks:
       - para-overlay
+      - dokploy-network
     logging: *default-logging
 
 volumes:
@@ -353,3 +367,5 @@ networks:
   para-overlay:
     driver: overlay
     attachable: true
+  dokploy-network:
+    external: true

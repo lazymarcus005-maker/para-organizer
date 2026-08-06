@@ -1,0 +1,33 @@
+{
+  "branch": "features/upgrade",
+  "last_phase_completed": "phase_2",
+  "next_phase": "phase_3",
+  "completed_steps": [
+    "0.1_fix_scheduler_topics",
+    "0.2_verify_migrate_pg_schema",
+    "1.1_fix_docker_compose",
+    "1.2_create_env_example",
+    "1.3_fix_dockerfile_healthcheck",
+    "1.4_create_wait_for_it_script",
+    "1.5_add_startup_command_para_app",
+    "2.1_port_worker_handlers_to_asyncpg",
+    "2.2_create_backup_py",
+    "2.3_add_retry_decorator",
+    "2.4_add_summary_field_to_models_v2"
+  ],
+  "remaining_steps": [
+    "3.1_run_alembic_migrations",
+    "3.2_run_migrate_pg_script",
+    "3.3_data_integrity_checks",
+    "4.1_provision_postgresql",
+    "4.2_build_docker_image",
+    "4.3_deploy_stack",
+    "5.1_smoke_tests",
+    "5.2_api_endpoint_verification",
+    "5.3_data_integrity_verification",
+    "5.4_performance_checks",
+    "5.5_worker_scheduler_verification"
+  ],
+  "errors": [],
+  "timestamp": "2026-08-05T12:00:00Z"
+}

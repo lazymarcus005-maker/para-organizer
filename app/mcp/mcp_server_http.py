@@ -17,6 +17,7 @@ if _PROJECT_ROOT not in sys.path:
 import asyncio
 import json
 import logging
+from contextlib import asynccontextmanager
 from datetime import date, timedelta
 
 from mcp.server.fastmcp import FastMCP
@@ -702,11 +703,16 @@ def create_app() -> Starlette:
         Route("/health", endpoint=_health_check),
     ]
 
+    @asynccontextmanager
+    async def lifespan(app: Starlette):
+        await init_db()
+        yield
+
     return Starlette(
         debug=False,
         middleware=middleware,
         routes=routes,
-        on_startup=[lambda: asyncio.run(init_db())],
+        lifespan=lifespan,
     )
 
 

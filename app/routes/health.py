@@ -23,11 +23,9 @@ async def _check_db() -> str:
     Returns "connected" if reachable, "disconnected" otherwise.
     """
     try:
-        from app.database import get_connection
+        from app.database import check_db_health
 
-        async with get_connection() as db:
-            await db.execute("SELECT 1")
-        return "connected"
+        return "connected" if await check_db_health() else "disconnected"
     except Exception as exc:
         logger.warning("Health check — DB unreachable: %s", exc)
         return "disconnected"

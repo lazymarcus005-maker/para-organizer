@@ -26,6 +26,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from pgvector.sqlalchemy import Vector
 
 
 class Base(DeclarativeBase):
@@ -65,10 +66,9 @@ class Note(Base):
         String, nullable=False, default="pending"
     )
     recurrence: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
-    embedding: Mapped[Optional[Any]] = mapped_column(
-        # pgvector vector(768) — added via Alembic migration
-        # SQLAlchemy type is deferred to the migration step
-        nullable=True
+    embedding: Mapped[Optional[list[float]]] = mapped_column(
+        Vector(768),
+        nullable=True,
     )
     search_vector: Mapped[Optional[Any]] = mapped_column(
         TSVECTOR,

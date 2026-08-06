@@ -39,6 +39,22 @@ logger = logging.getLogger("migrate_pg")
 BATCH_SIZE = 500
 
 
+def _transform_timestamps(row: dict) -> dict:
+    """Convert ISO datetime strings to Python datetime objects for all tables."""
+    from datetime import date, datetime
+    row = dict(row)
+    for key, val in list(row.items()):
+        if isinstance(val, str):
+            try:
+                row[key] = datetime.fromisoformat(val)
+            except (ValueError, TypeError):
+                try:
+                    row[key] = date.fromisoformat(val)
+                except (ValueError, TypeError):
+                    pass
+    return row
+
+
 def _transform_note(row: dict) -> dict:
     """Transform a SQLite note row to PostgreSQL-compatible values."""
     row = dict(row)
@@ -57,6 +73,10 @@ def _transform_note(row: dict) -> dict:
             row["recurrence"] = json.loads(row["recurrence"])
         except (json.JSONDecodeError, TypeError):
             row["recurrence"] = None
+    # Serialize JSONB columns to JSON strings for asyncpg raw SQL
+    for col in ("tags", "source_metadata", "recurrence"):
+        if col in row and row[col] is not None:
+            row[col] = json.dumps(row[col], ensure_ascii=False)
     row.pop("embedding", None)
     return row
 
@@ -68,6 +88,8 @@ def _transform_notification(row: dict) -> dict:
             row["payload"] = json.loads(row["payload"])
         except (json.JSONDecodeError, TypeError):
             row["payload"] = None
+    if row.get("payload") is not None:
+        row["payload"] = json.dumps(row["payload"], ensure_ascii=False)
     return row
 
 
@@ -78,6 +100,8 @@ def _transform_event(row: dict) -> dict:
             row["payload"] = json.loads(row["payload"])
         except (json.JSONDecodeError, TypeError):
             row["payload"] = None
+    if row.get("payload") is not None:
+        row["payload"] = json.dumps(row["payload"], ensure_ascii=False)
     return row
 
 
@@ -87,7 +111,7 @@ TABLES: list[tuple[str, str, list[str], Callable | None]] = [
         "id", "title", "content", "para_category", "sub_category", "status",
         "priority", "deadline", "tags", "source", "source_metadata",
         "llm_model", "llm_confidence", "llm_reasoning", "embedding_status",
-        "recurrence", "created_at", "updated_at", "archived_at", "summary",
+        "recurrence", "created_at", "updated_at", "archived_at",
     ], _transform_note),
     ("links", "links", [
         "id", "from_note_id", "to_note_id", "link_type", "created_at",
@@ -149,11 +173,18 @@ async def _copy_table(
 
     offset = 0
     total = 0
+    has_id = "id" in columns
     while True:
-        cursor = await sqlite_db.execute(
-            f"SELECT {col_names} FROM {sqlite_table} ORDER BY id LIMIT ? OFFSET ?",
-            (BATCH_SIZE, offset),
-        )
+        if has_id:
+            cursor = await sqlite_db.execute(
+                f"SELECT {col_names} FROM {sqlite_table} ORDER BY id LIMIT ? OFFSET ?",
+                (BATCH_SIZE, offset),
+            )
+        else:
+            cursor = await sqlite_db.execute(
+                f"SELECT {col_names} FROM {sqlite_table} LIMIT ? OFFSET ?",
+                (BATCH_SIZE, offset),
+            )
         rows = await cursor.fetchall()
         if not rows:
             break
@@ -161,6 +192,7 @@ async def _copy_table(
         batch = []
         for row in rows:
             d = dict(row)
+            d = _transform_timestamps(d)
             if transform:
                 d = transform(d)
             batch.append(tuple(d.get(c) for c in columns))

@@ -192,11 +192,18 @@ async def init_db() -> None:
 
 async def _init_pg() -> None:
     """Run Alembic migrations against PostgreSQL."""
+    import asyncio
+
     from alembic.config import Config
     from alembic import command
 
-    alembic_cfg = Config("alembic.ini")
-    command.upgrade(alembic_cfg, "head")
+    def _upgrade() -> None:
+        alembic_cfg = Config("alembic.ini")
+        command.upgrade(alembic_cfg, "head")
+
+    # Alembic's env.py drives its own asyncio.run(); run it in a worker
+    # thread so it never collides with the app's running event loop.
+    await asyncio.to_thread(_upgrade)
     logger.info("PostgreSQL schema up to date (Alembic upgrade head)")
 
 
