@@ -4,9 +4,12 @@ from datetime import date, datetime, timedelta
 
 import aiosqlite
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import func, select
 
 from app.database import get_db
+from app.database_v2 import async_session_factory
 from app.models import PARA_CATEGORIES, PRIORITIES, STATUSES
+from app.models_v2 import Note
 from app.usage import usage_summary
 
 router = APIRouter(prefix="/api", tags=["stats"])
@@ -19,38 +22,48 @@ async def get_usage(days: int = Query(default=7, ge=1, le=365)):
 
 
 @router.get("/stats")
-async def get_stats(db: aiosqlite.Connection = Depends(get_db)):
+async def get_stats():
+    """Aggregate note counts. Reads from PostgreSQL (the notes table's source
+    of truth) via the SQLAlchemy/asyncpg session, not the legacy aiosqlite
+    connection which points at an uninitialized local SQLite file.
+    """
     from app.cache import get_cache
     cache = get_cache()
     cached = await cache.get("para:stats")
     if cached is not None:
         return cached
-    total_cursor = await db.execute("SELECT COUNT(*) AS c FROM notes")
-    total_notes = (await total_cursor.fetchone())["c"]
 
-    by_category = {}
-    for category in PARA_CATEGORIES:
-        cursor = await db.execute("SELECT COUNT(*) AS c FROM notes WHERE para_category = ?", (category,))
-        by_category[category] = (await cursor.fetchone())["c"]
+    async with async_session_factory() as session:
+        total_notes = (await session.execute(select(func.count()).select_from(Note))).scalar_one()
 
-    by_status = {}
-    for status in STATUSES:
-        cursor = await db.execute("SELECT COUNT(*) AS c FROM notes WHERE status = ?", (status,))
-        by_status[status] = (await cursor.fetchone())["c"]
+        by_category = {}
+        for category in PARA_CATEGORIES:
+            by_category[category] = (await session.execute(
+                select(func.count()).select_from(Note).where(Note.para_category == category)
+            )).scalar_one()
 
-    by_priority = {}
-    for priority in PRIORITIES:
-        cursor = await db.execute("SELECT COUNT(*) AS c FROM notes WHERE priority = ?", (priority,))
-        by_priority[priority] = (await cursor.fetchone())["c"]
+        by_status = {}
+        for status in STATUSES:
+            by_status[status] = (await session.execute(
+                select(func.count()).select_from(Note).where(Note.status == status)
+            )).scalar_one()
 
-    upcoming_cursor = await db.execute(
-        "SELECT COUNT(*) AS c FROM notes WHERE deadline IS NOT NULL AND deadline >= date('now')"
-    )
-    upcoming_deadlines = (await upcoming_cursor.fetchone())["c"]
+        by_priority = {}
+        for priority in PRIORITIES:
+            by_priority[priority] = (await session.execute(
+                select(func.count()).select_from(Note).where(Note.priority == priority)
+            )).scalar_one()
 
-    avg_cursor = await db.execute("SELECT AVG(llm_confidence) AS avg FROM notes WHERE llm_confidence > 0")
-    avg_row = await avg_cursor.fetchone()
-    avg_confidence = round(avg_row["avg"], 3) if avg_row["avg"] is not None else 0.0
+        upcoming_deadlines = (await session.execute(
+            select(func.count()).select_from(Note).where(
+                Note.deadline.isnot(None), Note.deadline >= date.today()
+            )
+        )).scalar_one()
+
+        avg_confidence_raw = (await session.execute(
+            select(func.avg(Note.llm_confidence)).where(Note.llm_confidence > 0)
+        )).scalar_one()
+        avg_confidence = round(avg_confidence_raw, 3) if avg_confidence_raw is not None else 0.0
 
     result = {
         "total_notes": total_notes,
