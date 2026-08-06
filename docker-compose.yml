@@ -12,43 +12,6 @@ x-healthcheck: &app-healthcheck
   start_period: 30s
 
 services:
-  # ── Reverse Proxy ──────────────────────────────────────────────────────────
-  para-traefik:
-    image: traefik:v3.0
-    container_name: para-traefik
-    restart: unless-stopped
-    ports:
-      - "443:443"
-    command:
-      - "--providers.docker=true"
-      - "--providers.docker.swarmMode=true"
-      - "--providers.docker.exposedbydefault=false"
-      - "--entrypoints.websecure.address=:443"
-      - "--certificatesresolvers.cloudflare.acme.dnschallenge=true"
-      - "--certificatesresolvers.cloudflare.acme.dnschallenge.provider=cloudflare"
-      - "--certificatesresolvers.cloudflare.acme.email=admin@mxlabs.cloud"
-      - "--certificatesresolvers.cloudflare.acme.storage=/letsencrypt/acme.json"
-    environment:
-      - CF_API_EMAIL=${CF_API_EMAIL}
-      - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN}
-    volumes:
-      - "/var/run/docker.sock:/var/run/docker.sock:ro"
-      - traefik-data:/letsencrypt
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.dashboard.rule=Host(`traefik.para.mxlabs.cloud`)"
-      - "traefik.http.routers.dashboard.service=api@internal"
-      - "traefik.http.routers.dashboard.middlewares=auth"
-      - "traefik.http.middlewares.para-ratelimit.ratelimit.average=100"
-      - "traefik.http.middlewares.para-ratelimit.ratelimit.burst=200"
-    deploy:
-      replicas: 1
-      placement:
-        constraints: [node.role == manager]
-    networks:
-      - para-overlay
-    logging: *default-logging
-
   # ── Database ──────────────────────────────────────────────────────────────
   para-db:
     image: pgvector/pgvector:pg16
@@ -166,9 +129,12 @@ services:
       - "traefik.enable=true"
       - "traefik.http.routers.para-app.rule=Host(`para.mxlabs.cloud`)"
       - "traefik.http.routers.para-app.entrypoints=websecure"
-      - "traefik.http.routers.para-app.tls.certresolver=cloudflare"
+      - "traefik.http.routers.para-app.tls=true"
+      - "traefik.http.routers.para-app.tls.certresolver=letsencrypt"
       - "traefik.http.services.para-app.loadbalancer.server.port=8731"
       - "traefik.http.routers.para-app.middlewares=para-ratelimit"
+      - "traefik.http.middlewares.para-ratelimit.ratelimit.average=100"
+      - "traefik.http.middlewares.para-ratelimit.ratelimit.burst=200"
     logging: *default-logging
 
   # ── Background Worker ─────────────────────────────────────────────────────
@@ -318,7 +284,8 @@ services:
       - "traefik.enable=true"
       - "traefik.http.routers.para-mcp.rule=Host(`mcp.para.mxlabs.cloud`)"
       - "traefik.http.routers.para-mcp.entrypoints=websecure"
-      - "traefik.http.routers.para-mcp.tls.certresolver=cloudflare"
+      - "traefik.http.routers.para-mcp.tls=true"
+      - "traefik.http.routers.para-mcp.tls.certresolver=letsencrypt"
       - "traefik.http.services.para-mcp.loadbalancer.server.port=8100"
     logging: *default-logging
 
@@ -359,8 +326,6 @@ volumes:
   pgdata:
     driver: local
   redis-data:
-    driver: local
-  traefik-data:
     driver: local
 
 networks:

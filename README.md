@@ -39,7 +39,7 @@ Internet
     │
     ▼
 ┌──────────────┐
-│  Traefik     │  ← SSL termination, rate limiting, path routing
+│  Traefik     │  ← Dokploy's built-in reverse proxy (SSL, routing)
 │  :443        │
 └──────┬───────┘
        │
@@ -75,7 +75,6 @@ Internet
 
 | Service | Role | Replicas |
 |---------|------|----------|
-| **para-traefik** | Reverse proxy, SSL (Cloudflare), rate limiting | 1 |
 | **para-db** | PostgreSQL 16 + pgvector | 1 |
 | **para-redis** | Task queue + cache (Redis 7) | 1 |
 | **para-app** | FastAPI stateless app | 2+ |
