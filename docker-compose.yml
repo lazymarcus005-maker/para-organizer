@@ -245,7 +245,7 @@ services:
       - dokploy-network
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.para-mcp.rule=Host(`mcp.para.mxlabs.cloud`)"
+      - "traefik.http.routers.para-mcp.rule=Host(`mc-para.mxlabs.cloud`)"
       - "traefik.http.routers.para-mcp.entrypoints=websecure"
       - "traefik.http.routers.para-mcp.tls=true"
       - "traefik.http.routers.para-mcp.tls.certresolver=letsencrypt"
