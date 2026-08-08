@@ -213,6 +213,8 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     command: python3 -m app.mcp.mcp_server_http
+    ports:
+      - "8100:8100"
     environment:
       - PARA_DB_URL=postgresql+asyncpg://paradb:paradb%231234@169.58.65.88:5436/paradb
       - PARA_DB_POOL_SIZE=${PARA_DB_POOL_SIZE:-10}
