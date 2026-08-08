@@ -32,7 +32,7 @@ from app.scheduler import digest_trigger, reclassify_trigger, scheduler
 from app.settings_helper import get_env_settings_groups
 from app.tasks import suggest_task_from_note
 from app.utils import row_to_note
-from app.vector_store import delete_note_embedding, index_note
+from app.vector_store import index_note
 
 logger = logging.getLogger("para.routes")
 
@@ -279,11 +279,6 @@ async def update_note(note_id: int, payload: NoteUpdate, session: AsyncSession =
 async def delete_note(note_id: int, session: AsyncSession = Depends(get_pg_db)):
     await _fetch_note(session, note_id)
     await session.execute(sa_delete(Note).where(Note.id == note_id))
-
-    try:
-        await delete_note_embedding(None, note_id)
-    except Exception:
-        pass
 
     return {"deleted": note_id}
 
