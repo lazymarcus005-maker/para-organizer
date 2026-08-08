@@ -1,18 +1,33 @@
 """Unit tests for the PARA Organizer MCP server tools.
 
-The database is a throw-away SQLite file per test (via the ``db`` fixture) and
-the LLM classifier is mocked so no network calls are made.
+The MCP tools run against PostgreSQL (async SQLAlchemy), so these tests need a
+real PostgreSQL database. Point ``PARA_TEST_DB_URL`` at a *disposable* database
+to run them, e.g.::
+
+    PARA_TEST_DB_URL=postgresql+asyncpg://user:pw@localhost:5432/para_test \
+        python3 -m pytest tests/test_mcp.py
+
+The whole module is skipped when that variable is unset or the database is
+unreachable. It is deliberately a *separate* variable from ``PARA_DB_URL``:
+the ``db`` fixture TRUNCATEs every table between tests, so it must never be
+able to point at the production database by default.
+
+The LLM classifier is mocked so no network calls are made.
 """
 
+import asyncio
 import json
+import os
 from datetime import date, timedelta
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
-from app.config import settings
-from app.database import get_connection, init_db
 from app.mcp import mcp_server
+from app.models_v2 import Base, History, Note
 from app.mcp.mcp_server import (
     mcp,
     para_add_link,
@@ -41,12 +56,98 @@ ALL_TOOLS = {
 }
 
 
+TEST_DB_URL = os.environ.get("PARA_TEST_DB_URL")
+
+pytestmark = pytest.mark.skipif(
+    not TEST_DB_URL,
+    reason="PARA_TEST_DB_URL is not set (these tests need a disposable PostgreSQL database)",
+)
+
+# Modules that bound ``async_session_factory`` by value at import time and open
+# their own session when a caller passes ``None``. They all have to be pointed
+# at the test database, not just app.database_v2.
+_SESSION_FACTORY_MODULES = (
+    "app.database_v2",
+    "app.mcp.mcp_server",
+    "app.events",
+    "app.feedback",
+    "app.items",
+    "app.vector_store",
+)
+
+# Bound per-test by the ``db`` fixture, so make_note()/history_actions() can
+# reach the test database without every test threading the factory through.
+_session_factory = None
+
+
+_migrated = False
+
+
+async def _migrate_once() -> None:
+    """Create the schema in the disposable test database, once per run.
+
+    Alembic (not ``Base.metadata.create_all``) is used on purpose: ``search_vector``
+    is a GENERATED tsvector column added by a migration, and the ORM model
+    declares it as a plain nullable column. create_all would produce a
+    non-generated column that never populates, silently breaking every
+    full-text-search test.
+
+    Run in a worker thread because alembic/env.py drives its own ``asyncio.run``,
+    which raises if called from the event loop pytest-asyncio already has running
+    (same reason app.database._init_pg uses asyncio.to_thread).
+    """
+    global _migrated
+    if _migrated:
+        return
+
+    from alembic import command
+    from alembic.config import Config
+
+    def _upgrade() -> None:
+        prev_url = os.environ.get("PARA_DB_URL")
+        os.environ["PARA_DB_URL"] = TEST_DB_URL  # alembic/env.py reads this directly
+        try:
+            command.upgrade(Config("alembic.ini"), "head")
+        finally:
+            if prev_url is None:
+                os.environ.pop("PARA_DB_URL", None)
+            else:
+                os.environ["PARA_DB_URL"] = prev_url
+
+    await asyncio.to_thread(_upgrade)
+    _migrated = True
+
+
 @pytest_asyncio.fixture
-async def db(tmp_path, monkeypatch):
-    """Point the app at a fresh SQLite file and create the schema."""
-    monkeypatch.setattr(settings, "PARA_DB_PATH", str(tmp_path / "test.db"))
-    await init_db()
-    yield
+async def db(monkeypatch):
+    """Give each test an empty PostgreSQL database and route the tools to it.
+
+    The engine is built per test (with ``NullPool``) because pytest-asyncio runs
+    each test in a fresh event loop, and asyncpg connections are bound to the
+    loop that opened them — a shared/pooled engine would hand a later test a
+    connection attached to an already-closed loop.
+    """
+    global _session_factory
+
+    try:
+        await _migrate_once()
+    except Exception as exc:  # pragma: no cover - environment dependent
+        pytest.skip(f"PARA_TEST_DB_URL is not usable: {exc}")
+
+    engine = create_async_engine(TEST_DB_URL, poolclass=NullPool)
+    _session_factory = async_sessionmaker(bind=engine, expire_on_commit=False)
+
+    for module in _SESSION_FACTORY_MODULES:
+        monkeypatch.setattr(f"{module}.async_session_factory", _session_factory, raising=False)
+
+    tables = ", ".join(t.name for t in Base.metadata.sorted_tables)
+    async with engine.begin() as conn:
+        await conn.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
+
+    yield _session_factory
+
+    _session_factory = None
+    await engine.dispose()
 
 
 @pytest.fixture
@@ -71,16 +172,25 @@ async def make_note(title="note", content="body", para_category="projects",
                     status="active", priority="medium", deadline=None,
                     tags=None, source="manual") -> int:
     """Insert a note directly and return its id."""
-    async with get_connection() as conn:
-        cursor = await conn.execute(
-            """INSERT INTO notes (title, content, para_category, status, priority,
-                                  deadline, tags, source)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (title, content, para_category, status, priority, deadline,
-             json.dumps(tags or [], ensure_ascii=False), source),
+    async with _session_factory() as session:
+        note = Note(
+            title=title, content=content, para_category=para_category, status=status,
+            priority=priority,
+            deadline=date.fromisoformat(deadline) if isinstance(deadline, str) else deadline,
+            tags=tags or [], source=source,
         )
-        await conn.commit()
-        return cursor.lastrowid
+        session.add(note)
+        await session.commit()
+        return note.id
+
+
+async def history_actions(note_id: int, action: str) -> list[History]:
+    """Return this note's history rows for ``action`` (newest last)."""
+    async with _session_factory() as session:
+        return list((await session.execute(
+            select(History).where(History.note_id == note_id, History.action == action)
+            .order_by(History.id)
+        )).scalars().all())
 
 
 @pytest.mark.asyncio
@@ -173,10 +283,13 @@ async def test_search_respects_limit(db):
 
 
 @pytest.mark.asyncio
-async def test_search_malformed_query_returns_error(db):
+async def test_search_malformed_query_does_not_crash(db):
+    # Under SQLite FTS5 a bare quote was a syntax error and para_search returned
+    # {"error": ...}. PostgreSQL's plainto_tsquery sanitizes its input instead,
+    # so the same query is simply a no-match. Either way the tool must not raise.
+    await make_note(title="Server Monitoring", content="check contabo server health")
     result = await para_search('"')
-    assert isinstance(result, dict)
-    assert "error" in result
+    assert result == [] or (isinstance(result, dict) and "error" in result)
 
 
 @pytest.mark.asyncio
@@ -433,14 +546,9 @@ async def test_para_update_logs_history(db):
     await para_update(note_id, title="Updated")
     
     # Check that history was logged
-    async with get_connection() as conn:
-        cursor = await conn.execute(
-            "SELECT action, old_value, new_value FROM history WHERE note_id = ? AND action = 'updated'",
-            (note_id,),
-        )
-        rows = await cursor.fetchall()
-        assert len(rows) > 0
-        assert any(r["new_value"] == "Updated" for r in rows)
+    rows = await history_actions(note_id, "updated")
+    assert len(rows) > 0
+    assert any(r.new_value == "Updated" for r in rows)
 
 
 @pytest.mark.asyncio
@@ -462,14 +570,9 @@ async def test_para_complete_logs_history(db):
     note_id = await make_note(title="Task")
     await para_complete(note_id)
     
-    async with get_connection() as conn:
-        cursor = await conn.execute(
-            "SELECT action, new_value FROM history WHERE note_id = ? AND action = 'completed'",
-            (note_id,),
-        )
-        row = await cursor.fetchone()
-        assert row is not None
-        assert row["action"] == "completed"
+    rows = await history_actions(note_id, "completed")
+    assert rows
+    assert rows[0].action == "completed"
 
 
 @pytest.mark.asyncio
@@ -495,13 +598,7 @@ async def test_para_delete_logs_history(db):
     note_id = await make_note(title="Task")
     await para_delete(note_id)
     
-    async with get_connection() as conn:
-        cursor = await conn.execute(
-            "SELECT action FROM history WHERE note_id = ? AND action = 'deleted'",
-            (note_id,),
-        )
-        row = await cursor.fetchone()
-        assert row is not None
+    assert await history_actions(note_id, "deleted")
 
 
 @pytest.mark.asyncio
@@ -537,13 +634,8 @@ async def test_para_reclassify_logs_history(db, mock_classifier):
     note_id = await make_note(title="Task", para_category="inbox")
     await para_reclassify(note_id)
     
-    async with get_connection() as conn:
-        cursor = await conn.execute(
-            "SELECT action, new_value FROM history WHERE note_id = ? AND action = 'reclassified'",
-            (note_id,),
-        )
-        row = await cursor.fetchone()
-        assert row is not None
-        assert row["action"] == "reclassified"
-        assert row["new_value"] == "projects"
+    rows = await history_actions(note_id, "reclassified")
+    assert rows
+    assert rows[0].action == "reclassified"
+    assert rows[0].new_value == "projects"
 

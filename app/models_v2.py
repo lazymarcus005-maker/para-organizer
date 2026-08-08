@@ -13,6 +13,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     Column,
+    Computed,
     Date,
     DateTime,
     Float,
@@ -72,7 +73,16 @@ class Note(Base):
     )
     search_vector: Mapped[Optional[Any]] = mapped_column(
         TSVECTOR,
-        # GENERATED ALWAYS AS ... STORED — added via Alembic migration
+        # GENERATED ALWAYS AS ... STORED — created by alembic 0001_initial_schema.
+        # Declaring it Computed() is what keeps SQLAlchemy from listing it in
+        # INSERT/UPDATE; without this every session.add(Note(...)) sends
+        # search_vector=NULL and PostgreSQL rejects the statement with
+        # "cannot insert a non-DEFAULT value into column search_vector".
+        # Must stay byte-identical to the migration's expression.
+        Computed(
+            "to_tsvector('simple', coalesce(title, '') || ' ' || coalesce(content, ''))",
+            persisted=True,
+        ),
         nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
