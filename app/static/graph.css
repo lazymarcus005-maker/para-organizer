@@ -8,7 +8,7 @@
     align-items: center;
     justify-content: center;
     min-height: 600px;
-    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    background: linear-gradient(135deg, #f8fafc 0%, #141516 100%);
 }
 
 /* vis-network canvas styling */
