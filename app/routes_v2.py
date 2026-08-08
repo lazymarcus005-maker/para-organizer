@@ -32,7 +32,6 @@ from app.scheduler import digest_trigger, reclassify_trigger, scheduler
 from app.settings_helper import get_env_settings_groups
 from app.tasks import suggest_task_from_note
 from app.utils import row_to_note
-from app.vector_store import index_note
 
 logger = logging.getLogger("para.routes")
 
@@ -143,11 +142,6 @@ async def create_note(payload: NoteCreate, session: AsyncSession = Depends(get_p
         await queue.close()
     except Exception:
         logger.warning("Failed to enqueue background tasks for note %s", note_id, exc_info=True)
-
-    try:
-        await index_note(None, note_id, payload.content)
-    except Exception:
-        logger.warning("Failed to index embedding for note %s", note_id, exc_info=True)
 
     try:
         linked = await auto_link_note(None, note_id)
@@ -267,10 +261,14 @@ async def update_note(note_id: int, payload: NoteUpdate, session: AsyncSession =
                         old_value=json.dumps(existing, default=str, ensure_ascii=False),
                         new_value=json.dumps(fields, default=str, ensure_ascii=False))
 
-    try:
-        await index_note(None, note_id, fields.get("content") or existing["content"])
-    except Exception:
-        logger.warning("Failed to re-index embedding for note %s", note_id, exc_info=True)
+    if "content" in fields and fields["content"] != existing["content"]:
+        try:
+            from app.task_queue import TaskQueue
+            queue = TaskQueue()
+            await queue.publish("embed", {"note_id": note_id})
+            await queue.close()
+        except Exception:
+            logger.warning("Failed to enqueue embedding for note %s", note_id, exc_info=True)
 
     return await _fetch_note(session, note_id)
 
