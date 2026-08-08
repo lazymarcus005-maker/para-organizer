@@ -25,7 +25,6 @@ from app.database_v2 import get_db as get_pg_db
 from app.events import emit_event
 from app.feedback import record_feedback
 from app.items import create_item, extract_items_from_content, sync_note_progress
-from app.linker import auto_link_note
 from app.models import NoteCreate, NoteMove, NoteUpdate, PARA_CATEGORIES, PRIORITIES, STATUSES
 from app.models_v2 import Note, Link, History, Setting, ChatMessage, LlmUsage
 from app.scheduler import digest_trigger, reclassify_trigger, scheduler
@@ -142,13 +141,6 @@ async def create_note(payload: NoteCreate, session: AsyncSession = Depends(get_p
         await queue.close()
     except Exception:
         logger.warning("Failed to enqueue background tasks for note %s", note_id, exc_info=True)
-
-    try:
-        linked = await auto_link_note(None, note_id)
-        if linked:
-            logger.info("Auto-linked note %s to %s notes", note_id, linked)
-    except Exception:
-        logger.warning("Failed to auto-link note %s", note_id, exc_info=True)
 
     try:
         await emit_event(None, "note.created", note_id, {
