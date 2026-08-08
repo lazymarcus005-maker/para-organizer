@@ -25,14 +25,12 @@ from app.database_v2 import get_db as get_pg_db
 from app.events import emit_event
 from app.feedback import record_feedback
 from app.items import create_item, extract_items_from_content, sync_note_progress
-from app.linker import auto_link_note
 from app.models import NoteCreate, NoteMove, NoteUpdate, PARA_CATEGORIES, PRIORITIES, STATUSES
 from app.models_v2 import Note, Link, History, Setting, ChatMessage, LlmUsage
 from app.scheduler import digest_trigger, reclassify_trigger, scheduler
 from app.settings_helper import get_env_settings_groups
 from app.tasks import suggest_task_from_note
 from app.utils import row_to_note
-from app.vector_store import delete_note_embedding, index_note
 
 logger = logging.getLogger("para.routes")
 
@@ -145,18 +143,6 @@ async def create_note(payload: NoteCreate, session: AsyncSession = Depends(get_p
         logger.warning("Failed to enqueue background tasks for note %s", note_id, exc_info=True)
 
     try:
-        await index_note(None, note_id, payload.content)
-    except Exception:
-        logger.warning("Failed to index embedding for note %s", note_id, exc_info=True)
-
-    try:
-        linked = await auto_link_note(None, note_id)
-        if linked:
-            logger.info("Auto-linked note %s to %s notes", note_id, linked)
-    except Exception:
-        logger.warning("Failed to auto-link note %s", note_id, exc_info=True)
-
-    try:
         await emit_event(None, "note.created", note_id, {
             "title": payload.title, "para_category": para_category, "source": payload.source,
         })
@@ -267,10 +253,14 @@ async def update_note(note_id: int, payload: NoteUpdate, session: AsyncSession =
                         old_value=json.dumps(existing, default=str, ensure_ascii=False),
                         new_value=json.dumps(fields, default=str, ensure_ascii=False))
 
-    try:
-        await index_note(None, note_id, fields.get("content") or existing["content"])
-    except Exception:
-        logger.warning("Failed to re-index embedding for note %s", note_id, exc_info=True)
+    if "content" in fields and fields["content"] != existing["content"]:
+        try:
+            from app.task_queue import TaskQueue
+            queue = TaskQueue()
+            await queue.publish("embed", {"note_id": note_id})
+            await queue.close()
+        except Exception:
+            logger.warning("Failed to enqueue embedding for note %s", note_id, exc_info=True)
 
     return await _fetch_note(session, note_id)
 
@@ -279,11 +269,6 @@ async def update_note(note_id: int, payload: NoteUpdate, session: AsyncSession =
 async def delete_note(note_id: int, session: AsyncSession = Depends(get_pg_db)):
     await _fetch_note(session, note_id)
     await session.execute(sa_delete(Note).where(Note.id == note_id))
-
-    try:
-        await delete_note_embedding(None, note_id)
-    except Exception:
-        pass
 
     return {"deleted": note_id}
 
