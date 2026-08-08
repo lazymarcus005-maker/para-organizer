@@ -85,7 +85,7 @@ async function loadProjects() {
         if (!response.ok) throw new Error('Failed to load projects');
         
         const data = await response.json();
-        const projects = data.results || [];
+        const projects = data.notes || data.results || [];
         
         // Group projects by status
         const projectsByStatus = {
