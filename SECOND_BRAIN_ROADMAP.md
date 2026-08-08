@@ -7,15 +7,17 @@
 
 ## 1. Current State Review (ตรวจจากโค้ดจริง 2026-07-29)
 
+> **Production stack (verified against `main`, 2026-08):** PostgreSQL 16 + pgvector (external host `169.58.65.88:5436/paradb`), deployed on **Dokploy**. `main` เป็น production source of truth. MCP server เป็น HTTP SSE (`https://mc-para.mxlabs.cloud/mcp/sse`), PostgreSQL-native, 27 tools. เวอร์ชัน SQLite เดิม (aiosqlite + FTS5 + sqlite-vec, v4/legacy) ถูกเก็บไว้เพื่ออ้างอิงประวัติใน branch `backup/sqlite-version` เท่านั้น ไม่ได้ deploy แล้ว. LLM: Ollama Cloud (primary `deepseek-v4-flash`, fallback `gpt-oss:20b`), embeddings `nomic-embed-text`.
+
 ### 1.1 สิ่งที่ทำเสร็จแล้ว (22/22 tasks จาก improvement.json)
 
 | ชั้น | ความสามารถ | สถานะ |
 |------|-----------|-------|
-| **Storage** | SQLite WAL + FTS5 + sqlite-vec (768-dim) | ✅ |
+| **Storage** | PostgreSQL 16 + pgvector (semantic search, 768-dim) + `tsvector` (full-text), deployed on Dokploy — เดิมเป็น SQLite WAL + FTS5 + sqlite-vec (v4, ปัจจุบันอยู่ใน branch `backup/sqlite-version`) | ✅ |
 | **LLM** | Auto-classify, deadline extract, auto-tag, confidence routing | ✅ |
-| **MCP Server** | 15 tools (add/search/list/get/move/archive/stats/deadlines/digest/link/update/complete/delete/reclassify/ask) | ✅ |
+| **MCP Server** | 27 tools, HTTP SSE transport (`mc-para.mxlabs.cloud`), PostgreSQL-native (add/search/list/get/move/archive/stats/deadlines/digest/link/update/complete/delete/reclassify/ask/…) | ✅ |
 | **Hermes Inbound** | Cron webhook (`POST /api/notes/cron`) + dedup | ✅ |
-| **RAG** | Hybrid search (FTS5 + semantic vector), para_ask, chat mode | ✅ |
+| **RAG** | Hybrid search (PostgreSQL `tsvector` full-text + `pgvector` semantic search), para_ask, chat mode | ✅ |
 | **Automation** | 8 scheduler jobs (reclassify, auto-archive, escalate, deadline, stale, digest, weekly review, embedding backfill) | ✅ |
 | **Telegram** | Chat mode, voice STT, inline buttons (snooze/done/keep/archive), /note distill | ✅ |
 | **Intelligence** | Auto-linking (embedding), note distillation on archive, weekly AI review + 3 actions | ✅ |

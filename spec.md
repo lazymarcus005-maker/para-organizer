@@ -28,6 +28,12 @@ A self-hosted note management system that automatically classifies notes into th
 
 ## 2. Architecture
 
+> **Production note (v5):** the diagram below reflects the deployed architecture — six
+> Docker Compose services (`para-app`, `para-mcp`, `para-worker`, `para-scheduler`,
+> `para-backup`, `para-redis`), managed by Dokploy, with an external PostgreSQL 16 +
+> pgvector database. The earlier v4 design (single process, embedded SQLite) is
+> preserved for historical reference on branch `backup/sqlite-version`.
+
 ```
 ┌──────────────────────────────────────────────────────┐
 │                   USER TOUCHPOINTS                    │
@@ -38,48 +44,52 @@ A self-hosted note management system that automatically classifies notes into th
 │  └────┬────┘    └────┬─────┘    └────────┬────────┘  │
 │       │              │                   │            │
 └───────┼──────────────┼───────────────────┼────────────┘
-        │ MCP          │ Webhook           │ HTTP
-        │              │ (long poll)       │
+        │ HTTP SSE     │ Webhook           │ HTTP
+        │ /mcp/sse     │ (long poll)       │
 ┌───────┼──────────────┼───────────────────┼────────────┐
 │       ▼              ▼                   ▼            │
-│              PARA ORGANIZER CORE                      │
-│              (FastAPI :8731)                          │
-│                                                       │
-│  ┌──────────┐ ┌──────────┐ ┌─────────────────────┐   │
-│  │ REST API │ │ MCP      │ │ Telegram Handler    │   │
-│  │ CRUD +   │ │ Server   │ │ (notes + commands)  │   │
-│  │ Search + │ │ (10 tools│ │                     │   │
-│  │ Stats +  │ │  for     │ │                     │   │
-│  │ Export   │ │  Hermes) │ │                     │   │
-│  └────┬─────┘ └────┬─────┘ └─────────┬───────────┘   │
-│       └────────────┼─────────────────┘               │
-│                    ▼                                  │
-│           ┌──────────────────┐                        │
-│           │  Note Processor  │                        │
-│           │  1. Receive      │                        │
-│           │  2. LLM Classify │                        │
-│           │  3. Extract DL   │                        │
-│           │  4. Auto-tag     │                        │
-│           │  5. Find links   │                        │
-│           │  6. Save to DB   │                        │
-│           └────────┬─────────┘                        │
-│                    ▼                                  │
-│           ┌──────────────────┐                        │
-│           │     SQLite       │                        │
-│           │  notes|tags|links│                        │
-│           │  history|notif   │                        │
-│           └────────┬─────────┘                        │
-│                    ▼                                  │
-│           ┌──────────────────┐                        │
-│           │   Scheduler      │                        │
-│           │  (APScheduler)   │                        │
-│           └────────┬─────────┘                        │
-│                    ▼                                  │
-│           ┌──────────────────┐                        │
-│           │    Notifier      │                        │
-│           │  → Telegram      │                        │
-│           │  → WebSocket     │                        │
-│           └──────────────────┘                        │
+│      DOKPLOY-MANAGED DOCKER COMPOSE (production)       │
+│                                                        │
+│  ┌───────────────┐    ┌───────────────────────────┐   │
+│  │   para-mcp    │    │         para-app           │   │
+│  │  HTTP SSE     │    │      FastAPI :8731         │   │
+│  │  27 tools     │    │  REST API + Telegram       │   │
+│  │  :8100        │    │  webhook + Web UI          │   │
+│  │  mc-para.     │    │  para.mxlabs.cloud         │   │
+│  │  mxlabs.cloud │    │                             │   │
+│  └───────┬───────┘    └──────────────┬──────────────┘   │
+│          │                           │                   │
+│          └─────────────┬─────────────┘                   │
+│                        ▼                                 │
+│              ┌────────────────────┐                      │
+│              │     para-redis     │  task queue + cache   │
+│              │     (Redis 7)      │                       │
+│              └──────────┬─────────┘                      │
+│                         │                                 │
+│         ┌───────────────┼────────────────┐                │
+│         ▼               ▼                ▼                │
+│  ┌─────────────┐ ┌──────────────┐ ┌──────────────┐        │
+│  │ para-worker │ │para-scheduler│ │ para-backup  │        │
+│  │ classify /  │ │ (APScheduler,│ │ (optional    │        │
+│  │ embed /link │ │  singleton)  │ │  cloud       │        │
+│  │ (Redis      │ │              │ │  backup)     │        │
+│  │  consumer)  │ │              │ │              │        │
+│  └──────┬──────┘ └──────┬───────┘ └──────────────┘        │
+│         │               │                                  │
+│         ▼               ▼                                  │
+│  ┌───────────────────────────────────────────────────┐     │
+│  │           PostgreSQL 16 + pgvector (external)       │     │
+│  │   notes | links | history | notifications           │     │
+│  │   settings | chat_messages                           │     │
+│  │   169.58.65.88:5436/paradb  (PARA_DB_URL)             │     │
+│  └───────────────────────────────────────────────────┘     │
+│                         │                                   │
+│                         ▼                                   │
+│                ┌──────────────────┐                         │
+│                │    Notifier      │                         │
+│                │  → Telegram      │                         │
+│                │  → WebSocket     │                         │
+│                └──────────────────┘                         │
 └──────────────────────────────────────────────────────┘
         │                              │
         ▼                              ▼
@@ -101,28 +111,45 @@ A self-hosted note management system that automatically classifies notes into th
 | Component | Technology | Version |
 |-----------|-----------|---------|
 | Backend | FastAPI | latest |
-| Database | SQLite | built-in |
+| Database (production, v5) | PostgreSQL + pgvector, external host `169.58.65.88:5436/paradb` (`PARA_DB_URL`) | PostgreSQL 16 |
+| Database (legacy, v4) | SQLite (aiosqlite) — superseded; see `backup/sqlite-version` | built-in |
+| DB access | SQLAlchemy 2.0 async (`asyncpg`) + Alembic migrations | latest |
+| Task queue / cache | Redis (`para-redis` service) | 7 |
 | LLM | Ollama Cloud (OpenAI-compatible API) | — |
 | LLM Primary | `deepseek-v4-flash` | — |
 | LLM Fallback | `gpt-oss:20b` | — |
-| Scheduler | APScheduler | latest |
+| Embeddings | `nomic-embed-text` (via Ollama) | — |
+| Scheduler | APScheduler, runs as dedicated `para-scheduler` singleton service | latest |
 | Web UI | Jinja2 + HTMX + Tailwind CSS (CDN) | — |
-| Search | SQLite FTS5 | built-in |
+| Full-text search (production) | PostgreSQL `tsvector` (generated column) | built-in |
+| Full-text search (legacy, v4) | SQLite FTS5 — superseded; see `backup/sqlite-version` | built-in |
+| Semantic search (production) | `pgvector` extension (embedding similarity) | — |
 | Telegram | python-telegram-bot | latest |
-| MCP | mcp Python SDK | latest |
+| MCP (production) | `mcp` Python SDK, HTTP SSE transport (`app/mcp/mcp_server_http.py`), 27 tools | latest |
+| MCP (legacy/local-dev) | stdio transport (`app/mcp/mcp_server.py`) | latest |
 | Export | markdown + JSON | — |
-| Deploy | Docker + systemd | — |
-| Storage | /var/lib/para-organizer/ | — |
+| Deploy | Docker Compose (6 services) on Dokploy, GitHub Flow (merge to `main` = deploy) | — |
+| Storage (legacy, v4) | `/var/lib/para-organizer/` (local SQLite file + systemd) — superseded | — |
 | Python | 3.12+ | — |
 
 ---
 
 ## 4. Environment Variables (.env)
 
+> **v5 note:** production storage moved from a local SQLite file to PostgreSQL. The
+> `PARA_DB_PATH` variable below is retained only for the legacy SQLite build on
+> `backup/sqlite-version`; production sets `PARA_DB_URL` (and the Redis/pool
+> variables) instead, as configured in `docker-compose.yml` / `app/config.py`.
+
 ```bash
 # ─── Core ───
 PARA_PORT=8731
-PARA_DB_PATH=/var/lib/para-organizer/data/para.db
+PARA_DB_PATH=/var/lib/para-organizer/data/para.db   # legacy (v4/SQLite) only
+PARA_DB_URL=postgresql+asyncpg://paradb:<pass>@169.58.65.88:5436/paradb  # production (v5)
+PARA_DB_POOL_SIZE=10
+PARA_DB_MAX_OVERFLOW=20
+PARA_REDIS_URL=redis://para-redis:6379/0
+PARA_REDIS_CACHE_TTL=60
 PARA_SECRET_KEY=change-me-in-production
 
 # ─── LLM (Ollama Cloud) ───
@@ -132,6 +159,11 @@ LLM_PRIMARY=deepseek-v4-flash
 LLM_FALLBACK=gpt-oss:20b
 LLM_TIMEOUT=60
 LLM_MAX_RETRIES=2
+
+# ─── Embeddings (semantic search / pgvector) ───
+EMBED_PROVIDER=ollama_local
+EMBED_BASE_URL=http://localhost:11434
+EMBED_MODEL=nomic-embed-text
 
 # ─── Chat (conversational mode) ───
 CHAT_MODEL=gpt-oss:20b
@@ -162,7 +194,26 @@ WEB_PUBLIC_URL=https://para.mxlabs.cloud
 
 ## 5. Database Schema
 
-### 5.1 `notes` table
+> **Production (v5) storage:** the schema below was designed for the original SQLite
+> build (v4) and is preserved as-is for historical reference — the full legacy
+> implementation lives on branch `backup/sqlite-version` (`app/database.py`,
+> `app/models.py`). Production now runs on **PostgreSQL 16 + pgvector**
+> (`PARA_DB_URL`, external host `169.58.65.88:5436/paradb`), accessed via async
+> SQLAlchemy 2.0 (`app/database_v2.py`'s `async_session_factory`, ORM models in
+> `app/models_v2.py`) with Alembic migrations. The same logical tables exist
+> (`notes`, `links`, `history`, `notifications`, `settings`, `chat_messages`), with
+> these production-specific differences from the SQLite DDL shown below:
+> - `tags` and `source_metadata` are `JSONB` columns instead of TEXT-encoded JSON.
+> - Full-text search is a generated `tsvector` column (`search_vector`, `GENERATED
+>   ALWAYS AS ... STORED`) populated via `to_tsvector('simple', title || content)`,
+>   not a separate FTS5 virtual table/triggers (see §5.7 below for the legacy
+>   FTS5 approach and its production replacement).
+> - `notes` has an additional `embedding vector(768)` column (via the `pgvector`
+>   extension) storing `nomic-embed-text` embeddings for semantic search.
+> - IDs are still integer primary keys; timestamps use `timestamptz` via
+>   SQLAlchemy `DateTime(timezone=True)` rather than SQLite `DATETIME`.
+
+### 5.1 `notes` table (legacy v4 / SQLite — see production note above)
 
 ```sql
 CREATE TABLE notes (
@@ -284,7 +335,16 @@ CREATE TABLE chat_messages (
 CREATE INDEX idx_chat_messages_chat ON chat_messages(chat_id, id);
 ```
 
-### 5.7 FTS5 (Full-text search)
+### 5.7 FTS5 (Full-text search) — legacy v4/SQLite
+
+> **Production (v5) replacement:** full-text search no longer uses a separate FTS5
+> virtual table + sync triggers. It's a generated `tsvector` column on `notes`
+> (`search_vector`, populated by `to_tsvector('simple', title || content)`),
+> queried directly with PostgreSQL's `@@`/`ts_rank` operators — no triggers needed
+> since it's `GENERATED ALWAYS AS ... STORED`. Semantic search is handled
+> separately via the `embedding vector(768)` column and the `pgvector` extension
+> (cosine distance, `<=>` operator). The FTS5 DDL below is preserved for
+> historical reference (`backup/sqlite-version`).
 
 ```sql
 CREATE VIRTUAL TABLE notes_fts USING fts5(
@@ -453,7 +513,7 @@ Tested with 3 Thai notes against 4 models. All passed:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/search?q={query}` | Full-text search (FTS5) |
+| `GET` | `/api/search?q={query}` | Full-text search — PostgreSQL `tsvector` in production (v5); FTS5 in the legacy SQLite build |
 | `GET` | `/api/search/suggest?q={query}` | Search suggestions |
 
 ### 7.4 Stats
@@ -586,7 +646,31 @@ Response:
 
 ## 8. MCP Server (Hermes Integration)
 
+> **Production (v5) transport:** Hermes talks to PARA over **HTTP SSE**, not a
+> local stdio subprocess. The production server is `app/mcp/mcp_server_http.py`,
+> running as its own service (`para-mcp`, port 8100, host `mc-para.mxlabs.cloud`,
+> SSE endpoint `https://mc-para.mxlabs.cloud/mcp/sse`), backed by PostgreSQL via
+> async SQLAlchemy (`app/database_v2.py`'s `async_session_factory`,
+> `app/models_v2.py`). The original stdio server, `app/mcp/mcp_server.py` (§8.1
+> config below), still exists but is legacy/local-dev only — it is not the
+> production transport. Both servers expose the same **27-tool** set (verified via
+> `grep -c "@mcp.tool()" app/mcp/mcp_server.py`); the table in §8.2 shows the
+> original 10-tool set from the v1 design and is no longer exhaustive.
+
 ### 8.1 Configuration
+
+#### Production (HTTP SSE)
+
+```yaml
+# ~/.hermes/config.yaml
+mcp:
+  servers:
+    para-organizer:
+      url: https://mc-para.mxlabs.cloud/mcp/sse
+      transport: sse
+```
+
+#### Legacy / local-dev (stdio)
 
 ```yaml
 # ~/.hermes/config.yaml
@@ -596,12 +680,12 @@ mcp:
       command: python3
       args: ["/var/lib/para-organizer/app/mcp/mcp_server.py"]
       env:
-        PARA_DB: /var/lib/para-organizer/data/para.db
+        PARA_DB: /var/lib/para-organizer/data/para.db   # legacy SQLite path
         OLLAMA_API_KEY: ${OLLAMA_API_KEY}
         OLLAMA_BASE_URL: https://ollama.com/v1
 ```
 
-### 8.2 MCP Tools
+### 8.2 MCP Tools (original v1 set — 10 of the current 27; not exhaustive)
 
 | Tool Name | Parameters | Returns | Description |
 |-----------|-----------|---------|-------------|
@@ -615,6 +699,10 @@ mcp:
 | `para_deadlines` | `days_ahead?: int` | `Deadline[]` | Upcoming deadlines |
 | `para_digest` | — | `Digest` | Weekly digest |
 | `para_add_link` | `from_id: int`, `to_id: int`, `link_type?: str` | `Link` | Link notes |
+
+The remaining 17 tools (task/chat/graph/recurrence-related additions since v1) are
+defined in `app/mcp/mcp_server.py` / `app/mcp/mcp_server_http.py`; consult those
+files for the current full list and signatures.
 
 ### 8.3 Example MCP Tool Definition
 
@@ -669,7 +757,8 @@ POST /webhook/telegram
 
 Plain text (no leading `/`) is a **conversation** with the bot, not an instant note. The
 bot (`app/chat.py`, `CHAT_MODEL` setting) answers using retrieved context from the user's
-PARA notes — an FTS search over `notes_fts` on the message's keywords, plus upcoming
+PARA notes — a full-text search on the message's keywords (PostgreSQL `tsvector` in
+production; FTS5 `notes_fts` in the legacy SQLite build), plus upcoming
 deadlines and quick stats — and the last `CHAT_HISTORY_MAX` messages of conversation
 history, persisted per `chat_id` in the `chat_messages` table so it survives restarts.
 
@@ -728,6 +817,12 @@ creates or changes notes on its own.
 ---
 
 ## 10. Scheduler (APScheduler)
+
+> **Production (v5):** the scheduler runs as its own singleton service,
+> `para-scheduler`, in the production `docker-compose.yml` (`python3 -m
+> app.scheduler_service`), rather than as a background task embedded in the
+> `para-app` process. This avoids duplicate job execution when `para-app` is
+> scaled. The job table and cron logic below are unchanged.
 
 | Schedule | Job | Action |
 |----------|-----|--------|
@@ -829,14 +924,30 @@ scheduler.add_job(
 
 ## 12. Project Structure
 
+> **Production (v5) note:** `database.py` / `models.py` (aiosqlite connection +
+> Pydantic/SQLite models) are the legacy v4 layer, preserved on
+> `backup/sqlite-version`. Production adds `database_v2.py` (async SQLAlchemy
+> engine/session factory for PostgreSQL) and `models_v2.py` (SQLAlchemy ORM models,
+> incl. `pgvector` embedding column and generated `tsvector` search column), plus
+> `worker.py` (Redis-consuming background worker), `scheduler_service.py`
+> (standalone scheduler entrypoint), `mcp/mcp_server_http.py` (production HTTP SSE
+> MCP server), and `vector_store.py` (pgvector-backed embedding store). The tree
+> below is the original v1 layout; treat `database.py`/`models.py`/`mcp_server.py`
+> as legacy where it conflicts with the above.
+
 ```
 para-organizer/
 ├── app/
 │   ├── __init__.py
 │   ├── main.py                 # FastAPI app + startup + scheduler init
 │   ├── config.py               # Settings (pydantic-settings)
-│   ├── database.py             # SQLite connection + migrations
-│   ├── models.py               # Pydantic models (request/response)
+│   ├── database.py             # legacy (v4): SQLite connection + migrations
+│   ├── database_v2.py          # production (v5): async SQLAlchemy engine/session for PostgreSQL
+│   ├── models.py               # legacy (v4): Pydantic/SQLite models
+│   ├── models_v2.py            # production (v5): SQLAlchemy ORM models (pgvector, tsvector)
+│   ├── worker.py               # production (v5): Redis-consuming background worker (embed/link/classify)
+│   ├── scheduler_service.py    # production (v5): standalone scheduler entrypoint (para-scheduler)
+│   ├── vector_store.py         # production (v5): pgvector-backed embedding store
 │   │
 │   ├── classifier.py           # LLM classification
 │   │   ├── CLASSIFY_PROMPT
@@ -872,7 +983,8 @@ para-organizer/
 │   │
 │   ├── mcp/
 │   │   ├── __init__.py
-│   │   └── mcp_server.py       # MCP server for Hermes
+│   │   ├── mcp_server.py       # legacy/local-dev (v4): stdio MCP server for Hermes
+│   │   └── mcp_server_http.py  # production (v5): HTTP SSE MCP server (para-mcp service)
 │   │
 │   ├── templates/
 │   │   ├── base.html           # Layout: nav + Tailwind CDN
@@ -886,7 +998,7 @@ para-organizer/
 │       └── app.js              # HTMX helpers
 │
 ├── data/
-│   └── para.db                 # SQLite (gitignored)
+│   └── para.db                 # legacy (v4): local SQLite file (gitignored); production (v5) uses external PostgreSQL, no local data dir
 │
 ├── tests/
 │   ├── __init__.py
@@ -914,6 +1026,11 @@ para-organizer/
 
 ## 13. Dependencies (requirements.txt)
 
+> **v5 note:** production added a PostgreSQL/async-SQLAlchemy stack and Redis
+> alongside the original dependencies. `aiosqlite` and `sqlite-vec` are still
+> present in `requirements.txt` for the legacy SQLite code path
+> (`backup/sqlite-version`), but are not what production runs against.
+
 ```
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
@@ -924,9 +1041,21 @@ apscheduler>=3.10.0
 python-telegram-bot>=21.0
 jinja2>=3.1.0
 python-multipart>=0.0.9
-mcp>=1.0.0
+mcp>=1.0.0,<2.0.0
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
+
+# ─── Legacy (v4 / SQLite) ───
+aiosqlite>=0.20.0
+sqlite-vec>=0.1.0
+
+# ─── Production (v5 / PostgreSQL) ───
+asyncpg>=0.29.0
+sqlalchemy[asyncio]>=2.0
+alembic>=1.13.0
+psycopg2-binary>=2.9.0
+redis[hiredis]>=5.0.0
+pgvector>=0.2.0
 ```
 
 ---
@@ -954,25 +1083,88 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8731"]
 
 ### 14.2 docker-compose.yml
 
-```yaml
-version: "3.8"
+> **v5 note:** the single-service compose file below was the original v1 design
+> (one container, local SQLite volume). Production runs a **six-service** compose
+> stack, built from the same `Dockerfile` but with different `command:`s per
+> service, deployed via **Dokploy** (self-hosted PaaS) rather than plain
+> `docker compose up`. All services run `replicas: 1` (single-user deployment).
+> Key differences from the sketch below:
+> - No local SQLite volume — `PARA_DB_URL` points at the external PostgreSQL host
+>   (`169.58.65.88:5436/paradb`); there's no `./data` bind mount for the DB.
+> - Six services: `para-app` (FastAPI REST + Web UI + Telegram webhook, :8731,
+>   `para.mxlabs.cloud`), `para-mcp` (MCP HTTP SSE, :8100, `mc-para.mxlabs.cloud`),
+>   `para-worker` (Redis-queue task consumer — embeddings/linking/classification),
+>   `para-scheduler` (APScheduler singleton), `para-backup` (optional cloud
+>   backup), `para-redis` (Redis 7, task queue + cache).
+> - `para-app` and `para-mcp` are exposed to the internet via Traefik labels
+>   (`traefik.enable=true`, host-based routing, TLS via Let's Encrypt) on a
+>   `dokploy-network`, plus an internal `para-overlay` network shared by all
+>   services.
+> - Deploy model is GitHub Flow: merging to `main` triggers Dokploy to pull and
+>   redeploy from the repo — there's no manual `docker compose up` step in normal
+>   operation.
+>
+> See the real `docker-compose.yml` in the repo root for the full definition
+> (env vars, healthchecks, resource limits, Traefik labels). Abbreviated shape:
 
+```yaml
 services:
-  para-organizer:
-    build: .
-    container_name: para-organizer
-    ports:
-      - "8731:8731"
-    volumes:
-      - ./data:/var/lib/para-organizer/data
-    env_file:
-      - .env
-    restart: unless-stopped
+  para-redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    deploy: { replicas: 1 }
+
+  para-app:                       # FastAPI REST + Web UI + Telegram webhook
+    build: { context: ., dockerfile: Dockerfile }
+    command: python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8731
+    ports: ["8731:8731"]
+    environment:
+      - PARA_DB_URL=postgresql+asyncpg://paradb:***@169.58.65.88:5436/paradb
+      - PARA_REDIS_URL=redis://para-redis:6379/0
+    depends_on: { para-redis: { condition: service_healthy } }
+    deploy: { replicas: 1 }
+    labels:
+      - "traefik.http.routers.para-app.rule=Host(`para.mxlabs.cloud`)"
+
+  para-mcp:                       # MCP HTTP SSE server (production transport)
+    build: { context: ., dockerfile: Dockerfile }
+    command: python3 -m app.mcp.mcp_server_http
+    environment:
+      - PARA_DB_URL=postgresql+asyncpg://paradb:***@169.58.65.88:5436/paradb
+    deploy: { replicas: 1 }
+    labels:
+      - "traefik.http.routers.para-mcp.rule=Host(`mc-para.mxlabs.cloud`)"
+
+  para-worker:                    # background task consumer (embed/link/classify)
+    build: { context: ., dockerfile: Dockerfile }
+    command: python3 -m app.worker
+    depends_on: { para-redis: { condition: service_healthy } }
+    deploy: { replicas: 1 }
+
+  para-scheduler:                 # APScheduler singleton
+    build: { context: ., dockerfile: Dockerfile }
+    command: python3 -m app.scheduler_service
+    deploy: { replicas: 1 }
+
+  para-backup:                    # optional cloud backup
+    build: { context: ., dockerfile: Dockerfile }
+    command: python3 -m app.scheduler_service --backup-only
+    deploy: { replicas: 1 }
+
+networks:
+  para-overlay: { driver: overlay, attachable: true }
+  dokploy-network: { external: true }
 ```
 
 ---
 
-## 15. systemd
+## 15. systemd (legacy v4 bare-metal deploy — superseded)
+
+> **Production (v5) note:** production is no longer deployed via systemd on bare
+> metal. It runs as the Docker Compose stack in §14.2, managed by **Dokploy**
+> (self-hosted PaaS), with deploys triggered by merges to `main` (GitHub Flow).
+> The unit file below reflects the original v1/v4 deployment model and is kept
+> for historical reference only.
 
 ### para-organizer.service
 

@@ -8,17 +8,20 @@
 
 ## 1. ภาพรวม (Overview)
 
-PARA Organizer เปิด 3 ช่องทางให้ agent ใช้งาน:
+PARA Organizer เปิด 4 ช่องทางให้ agent ใช้งาน:
 
 | ช่องทาง | เหมาะกับ | Auth |
 |---------|----------|------|
+| **MCP HTTP SSE** (production, `mcp_server_http.py`) | Agent เรียก 27 `para_*` tools ผ่าน HTTP SSE — ช่องทางหลักที่แนะนำ | env vars (ไม่ต้อง token) |
 | **REST API** (FastAPI) | HTTP client, integration ทั่วไป, cross-language | Bearer token (บาง endpoint) |
-| **MCP server** (stdio) | Hermes agent เรียก tools โดยตรง | env vars (ไม่ต้อง token) |
+| **MCP stdio** (`mcp_server.py`, local dev เท่านั้น) | รัน local เพื่อ dev/debug — **ไม่ใช้ใน production** | env vars (ไม่ต้อง token) |
 | **Telegram bot** | คุยกับมนุษย์ (chat mode / commands) | allowed user IDs |
 
-- **Base URL:** `http://localhost:8731` (config `PARA_PORT`, prod ใช้ `WEB_PUBLIC_URL`)
-- **DB:** SQLite ที่ `PARA_DB_PATH` (default `data/para.db`)
-- **LLM:** Ollama Cloud (`deepseek-v4-flash` classify, `gpt-oss:20b` chat)
+- **Production:** branch `main`, PostgreSQL v5, deploy บน Dokploy (self-hosted PaaS) — SQLite version เก่าเก็บไว้แค่ที่ branch `backup/sqlite-version` เพื่ออ้างอิงประวัติ ไม่ได้ deploy ที่ไหนแล้ว
+- **Base URL (REST, production):** `https://para.mxlabs.cloud` — local dev default `http://localhost:8731` (config `PARA_PORT`)
+- **Base URL (MCP HTTP SSE, production):** `https://mc-para.mxlabs.cloud/mcp/sse`
+- **DB:** PostgreSQL 16 + pgvector ที่ `169.58.65.88:5436/paradb` (config `PARA_DB_URL`) — full-text search ใช้ PostgreSQL `tsvector`, embeddings ใช้ `pgvector` (ไม่ใช่ SQLite/FTS5/sqlite-vec)
+- **LLM:** Ollama Cloud — primary `deepseek-v4-flash`, fallback `gpt-oss:20b`; embeddings ใช้ `nomic-embed-text`
 
 ---
 
@@ -107,7 +110,7 @@ Archive โน้ต (set `status=archived`, `para_category=archives`, `archived
 ### 3.2 Search
 
 #### `GET /api/search?q=<คำค้น>&limit=20`
-Full-text search (SQLite FTS5, BM25 ranking)
+Full-text search (PostgreSQL `tsvector`, `ts_rank` ranking)
 - `limit` ≤ 100
 - token แต่ละคำแปลงเป็น prefix-OR match (`"word"*`)
 - snippet ถูก HTML-escape กัน XSS แล้ว swap เป็น `<mark>`
@@ -194,11 +197,30 @@ curl -X POST http://localhost:8731/api/notes/cron \
 
 ---
 
-## 4. MCP Server (Hermes native)
+### 3.7 Health Check
 
-Agent ที่รันบน Hermes เรียก PARA ผ่าน MCP tools ได้ 2 ช่องทาง:
+| Endpoint | ทำอะไร |
+|----------|--------|
+| `GET /api/health/live` | liveness probe |
+| `GET /api/health/ready` | readiness probe (เช็ค DB connection ฯลฯ) |
 
-### 4.1 ช่องทางที่ 1: MCP stdio (v4, local development)
+---
+
+## 4. MCP Server
+
+Agent เรียก PARA ผ่าน MCP tools ได้ 2 ช่องทาง — **ให้ใช้ HTTP SSE เป็นค่าเริ่มต้น** ส่วน stdio มีไว้สำหรับ local dev เท่านั้น:
+
+### 4.1 ช่องทางหลัก: MCP HTTP SSE (production)
+```yaml
+mcp:
+  servers:
+    para-organizer:
+      url: "https://mc-para.mxlabs.cloud/mcp/sse"
+```
+> Implementation: `app/mcp/mcp_server_http.py` — PostgreSQL-native, async SQLAlchemy ผ่าน `app/models_v2.py` โดยใช้ `app/database_v2.py` ของ `async_session_factory`
+> ใช้ HTTP SSE transport — connection pooling, scale-out ได้, ไม่ต้อง spawn process ใหม่ทุก connection
+
+### 4.2 MCP stdio — local development เท่านั้น (ไม่ใช่ production)
 ```yaml
 mcp:
   servers:
@@ -206,26 +228,19 @@ mcp:
       command: python3
       args: ["app/mcp/mcp_server.py"]
       env:
-        PARA_DB_PATH: /var/lib/para-organizer/data/para.db
+        PARA_DB_URL: postgresql+asyncpg://user:pass@169.58.65.88:5436/paradb
         OLLAMA_API_KEY: ${OLLAMA_API_KEY}
 ```
-> รัน `cwd` ที่ repo root หรือใส่ absolute path ใน args
+> รัน `cwd` ที่ repo root หรือใส่ absolute path ใน args — ใช้สำหรับ dev/debug local เท่านั้น ห้ามใช้ชี้ production
 
-### 4.2 ช่องทางที่ 2: MCP HTTP SSE (v5, production)
-```yaml
-mcp:
-  servers:
-    para-organizer:
-      url: "https://mcp.para.mxlabs.cloud/mcp/sse"
-```
-> ใช้ HTTP SSE transport — connection pooling, scale-out ได้, ไม่ต้อง spawn process ใหม่ทุก connection
+### 4.3 MCP Tools ที่มี (27 tools)
 
-### 4.3 MCP Tools ที่มี
+ทั้ง `mcp_server.py` (stdio, local dev) และ `mcp_server_http.py` (HTTP SSE, production) เปิด tool set เดียวกัน:
 
 | Tool | Signature | ทำอะไร |
 |------|-----------|--------|
 | `para_add_note` | `(title: str, content: str) -> dict` | สร้างโน้ต + auto-classify |
-| `para_search` | `(query: str, category=None, limit=10) -> list` | FTS search |
+| `para_search` | `(query: str, category=None, limit=10) -> list` | full-text search |
 | `para_list` | `(category=None, status=None, limit=20) -> list` | list โน้ต |
 | `para_get` | `(id: int) -> dict` | ดึงโน้ตเดียว |
 | `para_move` | `(id: int, category: str) -> dict` | ย้ายหมวด |
@@ -234,6 +249,23 @@ mcp:
 | `para_deadlines` | `(days_ahead=14) -> list` | deadline ใกล้ถึง |
 | `para_digest` | `() -> dict` | สรุปสัปดาห์ |
 | `para_add_link` | `(from_id, to_id, link_type="related") -> dict` | เชื่อมโน้ต (related/depends_on/refines) |
+| `para_update` | `(id: int, ...) -> dict` | แก้ไขโน้ต (partial update) |
+| `para_complete` | `(id: int) -> dict` | ทำเครื่องหมายโน้ตว่าเสร็จแล้ว |
+| `para_delete` | `(id: int) -> dict` | ลบโน้ตถาวร |
+| `para_reclassify` | `(id: int) -> dict` | สั่ง re-classify ด้วย LLM ใหม่ |
+| `para_ask` | `(question: str) -> dict` | ถามคำถามเกี่ยวกับ second-brain (RAG-style) |
+| `para_context` | `(id: int) -> dict` | ดึง context รอบโน้ต |
+| `para_create_task` | `(...) -> dict` | มอบหมาย background task |
+| `para_task_result` | `(task_id) -> dict` | รายงานผลลัพธ์ของ background task |
+| `para_tasks` | `(...) -> list` | list background tasks |
+| `para_brain_state` | `() -> dict` | ดึงสรุปสถานะ second-brain ปัจจุบัน |
+| `para_graph_context` | `(id: int) -> dict` | ดึง graph neighborhood รอบโน้ต |
+| `para_related` | `(id: int) -> list` | ดึงโน้ตที่เกี่ยวข้องกับโน้ตนี้ |
+| `para_items` | `(note_id: int) -> list` | list checklist items ของโน้ต |
+| `para_add_item` | `(note_id: int, text: str) -> dict` | เพิ่ม checklist item |
+| `para_done_item` | `(item_id: int) -> dict` | ทำเครื่องหมาย checklist item ว่าเสร็จ |
+| `para_plan` | `(horizon: str) -> dict` | สร้าง action plan ตามช่วงเวลา (horizon) |
+| `para_feedback_stats` | `() -> dict` | ดึงสถิติ feedback/ความแม่นยำของ classification |
 
 - ทุก tool คืน dict/list ที่ JSON-serialize ได้
 - error (not found / invalid) คืน `{"error": "..."}` — server ไม่ crash
@@ -306,12 +338,13 @@ mcp:
 
 - [ ] ตั้ง `PARA_SECRET_KEY` และแนบ Bearer token ทุก write endpoint
 - [ ] เขียนโน้ตอัตโนมัติจาก cron → ใช้ `POST /api/notes/cron` + `source: "cron:<name>"`
-- [ ] Hermes agent → ลง MCP server แล้วเรียก `para_*` tools (ไม่ต้อง token)
+- [ ] Agent ทั่วไป → ต่อ MCP HTTP SSE ที่ `https://mc-para.mxlabs.cloud/mcp/sse` แล้วเรียก `para_*` tools (ไม่ต้อง token) — ใช้ stdio เฉพาะ local dev เท่านั้น
 - [ ] ค้นข้อมูลก่อนตอบผู้ใช้ → `GET /api/search` หรือ `para_search`
 - [ ] เช็คงานใกล้ deadline → `GET /api/deadlines` หรือ `para_deadlines`
+- [ ] เช็ค service พร้อมใช้งาน → `GET /api/health/live`, `GET /api/health/ready`
 - [ ] อย่า hardcode enum — ยึดตาม §5
 - [ ] จัดการ `401/404/422` ให้ครบ
 
 ---
 
-*Generated for agent-to-agent integration. อ้างอิงจาก source จริงใน `app/routes/`, `app/mcp/mcp_server.py`, `app/models.py`*
+*Generated for agent-to-agent integration. อ้างอิงจาก source จริงใน `app/routes/`, `app/mcp/mcp_server_http.py` (production), `app/mcp/mcp_server.py` (local dev), `app/models_v2.py`*

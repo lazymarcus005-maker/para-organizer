@@ -1,10 +1,10 @@
-# PARA Organizer — Docker Deployment Guide
+# PARA Organizer — Production Deployment Guide
 
-> **Date:** 2025-07-26 | **Target:** Production on Contabo / mxlabs.cloud
+> **Target:** Production on Dokploy (self-hosted PaaS) at `para.mxlabs.cloud` / `mc-para.mxlabs.cloud`
 
 ---
 
-## 🚀 Deployment Strategy (GitHub Flow)
+## 🚀 Deployment Strategy (GitHub Flow + Dokploy)
 
 This project deploys via **GitHub Flow**: merging a Pull Request into `main` is the deployment trigger.
 
@@ -14,108 +14,42 @@ This project deploys via **GitHub Flow**: merging a Pull Request into `main` is 
 2. Implement and test your changes locally
 3. Open a Pull Request targeting `main`
 4. Review and test the PR
-5. Merge the PR into `main` → **this automatically deploys to production**
+5. Merge the PR into `main` → **Dokploy pulls `main` and redeploys automatically**
 
-There is no separate manual "release" step for normal changes — `main` is always the deployed state. Production runs at **https://para.mxlabs.cloud**, hosted on a Contabo VPS.
+There is no separate manual "release" step for normal changes — `main` is always the deployed state. `main` is the production source of truth: it contains the PostgreSQL v5 codebase. The old SQLite v4 codebase is preserved for historical reference on the `backup/sqlite-version` branch only — it is not deployed anywhere.
 
-The rest of this document covers the underlying Docker deployment mechanics (used by the automated deploy and available for manual/local use).
+Production runs at:
+- **REST API:** https://para.mxlabs.cloud
+- **MCP HTTP SSE:** https://mc-para.mxlabs.cloud/mcp/sse
+
+Dokploy manages the reverse proxy (built-in Traefik with Let's Encrypt auto-cert), container orchestration, and redeploys from this repo's `docker-compose.yml`.
 
 ---
 
 ## 📋 Prerequisites
 
-- Docker Desktop หรือ Docker Engine >= 20.10
-- Docker Compose >= 2.0
-- Git (สำหรับ clone repository)
-- Ollama Cloud API key (สำหรับ LLM classifier)
-- Telegram Bot Token (optional, สำหรับ Telegram integration)
-
----
-
-## 🚀 Quick Start (5 minutes)
-
-### 1. Clone & Setup
-
-```bash
-cd ~/workspace
-git clone https://github.com/lazymarcus005-maker/para-organizer.git
-cd para-organizer
-
-# Copy .env.example to .env
-cp .env.example .env
-```
-
-### 2. Configure Environment
-
-แก้ไข `.env` ใส่ค่า API keys:
-
-```bash
-# อย่างน้อยต้องมี 2 ตัวนี้
-OLLAMA_API_KEY=sk-xxx-your-key-xxx
-TELEGRAM_BOT_TOKEN=123456:ABCDEFxxxx (optional)
-
-# ปรับ domain ถ้าใช้ production
-WEB_PUBLIC_URL=https://para.mxlabs.cloud
-```
-
-### 3. Start Containers
-
-```bash
-# Build & start in background
-docker-compose up -d
-
-# Verify all services running
-docker-compose ps
-
-# Expected output:
-# NAME                          STATUS
-# para-organizer-init           Exited (0)
-# para-organizer-app            Up (healthy)
-```
-
-### 4. Test
-
-```bash
-# Check API
-curl http://localhost:8731/api/stats
-
-# Open Web UI
-open http://localhost:8731
-```
-
-**Done!** ✅
+- A Dokploy instance with access to a Docker Swarm-capable host and the `dokploy-network` overlay network
+- An externally managed PostgreSQL 16 + pgvector database (production uses `169.58.65.88:5436/paradb`) — this is **not** provisioned by `docker-compose.yml`
+- Ollama Cloud API key (for the LLM classifier and chat)
+- Telegram Bot Token (optional, for Telegram integration)
+- Git access to this repository
 
 ---
 
 ## 🐳 Docker Compose Architecture
 
+`docker-compose.yml` defines 6 services, all deployed with `replicas: 1` (single/two-user deployment — see `x-healthcheck` and each service's `deploy.replicas`):
+
+```text
+1. para-redis      — Redis 7, task queue + cache
+2. para-app        — FastAPI REST API, port 8731, Traefik host para.mxlabs.cloud
+3. para-worker     — background task consumer (python3 -m app.worker)
+4. para-scheduler  — APScheduler singleton (python3 -m app.scheduler_service)
+5. para-mcp        — MCP HTTP SSE server, port 8100, Traefik host mc-para.mxlabs.cloud
+6. para-backup     — optional cloud backup (python3 -m app.scheduler_service --backup-only)
 ```
-┌─────────────────────────────────────────┐
-│  docker-compose.yml (3 services)        │
-├─────────────────────────────────────────┤
-│                                         │
-│  1. para-init (one-shot DB init)       │
-│     └─ runs scripts/init_db.py          │
-│     └─ mounts para-data volume          │
-│                                         │
-│  2. para-app (main FastAPI app)        │
-│     └─ Python 3.12 + FastAPI           │
-│     └─ port 8731                       │
-│     └─ depends_on para-init             │
-│     └─ healthcheck enabled              │
-│                                         │
-│  3. para-nginx (optional)               │
-│     └─ Reverse proxy + SSL              │
-│     └─ Rate limiting                    │
-│     └─ Gzip compression                 │
-│     └─ ports 80/443                     │
-│                                         │
-└─────────────────────────────────────────┘
-         ↓ volume mount ↓
-    para-data volume (/var/lib/para-organizer/data)
-         ↓
-    SQLite para.db
-```
+
+All services except `para-redis` connect to the external PostgreSQL database via `PARA_DB_URL`. `para-app`, `para-mcp`, and `para-worker`/`para-scheduler` join both the internal `para-overlay` network and Dokploy's `dokploy-network` (for Traefik routing).
 
 ---
 
@@ -124,321 +58,157 @@ open http://localhost:8731
 ```
 para-organizer/
 ├── app/
-│   ├── main.py              ← FastAPI app entry
-│   ├── config.py            ← Settings
-│   ├── database.py          ← SQLite
-│   ├── classifier.py        ← LLM
-│   ├── scheduler.py         ← APScheduler
-│   ├── notifier.py          ← Telegram notifier
-│   ├── routes/              ← API endpoints
-│   ├── integrations/        ← Telegram bot
-│   ├── mcp/                 ← Hermes MCP server
-│   └── templates/           ← Jinja2 HTML
-├── scripts/
-│   ├── init_db.py           ← Initialize SQLite
-│   └── seed.py              ← Seed test data
-├── tests/                   ← Test suite
-├── Dockerfile               ← Multi-stage build
-├── docker-compose.yml       ← Container orchestration
-├── nginx.conf               ← Reverse proxy config
-├── requirements.txt         ← Python dependencies
-├── .env.example             ← Environment template
-└── spec.md                  ← Full technical spec
+│   ├── main.py               ← FastAPI app entry
+│   ├── config.py              ← Settings (env-driven)
+│   ├── database_v2.py         ← PostgreSQL async engine/session (production)
+│   ├── models_v2.py           ← PostgreSQL SQLAlchemy models (production)
+│   ├── database.py            ← SQLite (legacy v4, see backup/sqlite-version)
+│   ├── classifier.py          ← LLM classification
+│   ├── worker.py              ← Redis task queue consumer
+│   ├── scheduler_service.py   ← Standalone APScheduler process
+│   ├── notifier.py            ← Telegram notifier
+│   ├── routes/                ← API endpoints
+│   ├── integrations/          ← Telegram bot
+│   ├── mcp/
+│   │   ├── mcp_server_http.py ← MCP HTTP SSE server (production, 27 tools)
+│   │   └── mcp_server.py      ← MCP stdio server (local-dev only)
+│   └── templates/             ← Jinja2 HTML
+├── alembic/                   ← PostgreSQL migrations
+├── scripts/                   ← DB init / maintenance scripts
+├── tests/                     ← Test suite
+├── Dockerfile                 ← Multi-stage build (shared by all services)
+├── docker-compose.yml         ← 6-service orchestration (Dokploy-managed)
+├── requirements.txt           ← Python dependencies
+├── .env.example                ← Environment template
+└── spec.md                    ← Full technical spec
 ```
+
+---
+
+## 🔧 Environment Variables
+
+Set these on the Dokploy project (or in `.env` for local docker-compose use). See `.env.example` for the complete list.
+
+### Core
+
+| Variable | Purpose |
+|---|---|
+| `PARA_DB_URL` | PostgreSQL connection string, e.g. `postgresql+asyncpg://paradb:<password>@169.58.65.88:5436/paradb` |
+| `PARA_REDIS_URL` | Redis connection string, e.g. `redis://para-redis:6379/0` |
+| `PARA_DB_POOL_SIZE` / `PARA_DB_MAX_OVERFLOW` | SQLAlchemy async pool sizing (defaults `10` / `20`) |
+| `PARA_REDIS_CACHE_TTL` | Read-cache TTL in seconds (default `60`) |
+| `PARA_SECRET_KEY` | Bearer token for authenticated API endpoints — generate with `openssl rand -hex 32` |
+| `PARA_PORT` | Port `para-app` listens on (default `8731`) |
+
+### LLM (Ollama Cloud)
+
+| Variable | Purpose |
+|---|---|
+| `OLLAMA_API_KEY` | Required for classification/chat/embeddings |
+| `OLLAMA_BASE_URL` | Default `https://ollama.com/v1` |
+| `LLM_PRIMARY` / `LLM_FALLBACK` | Default `deepseek-v4-flash` / `gpt-oss:20b` |
+| `EMBED_MODEL` | Default `nomic-embed-text` |
+
+### Telegram / Notifications / Web
+
+| Variable | Purpose |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_WEBHOOK_URL` / `TELEGRAM_ALLOWED_USERS` | Telegram integration (optional) |
+| `NOTIFY_CHANNEL`, `NOTIFY_DEADLINE_DAYS`, `NOTIFY_DIGEST_DAY`, `NOTIFY_DIGEST_TIME`, `NOTIFY_STALE_DAYS` | Notification scheduling |
+| `AUTO_ARCHIVE_DAYS`, `RECLASSIFY_INTERVAL_HOURS`, `RECLASSIFY_CONFIDENCE_THRESHOLD` | Scheduler job tuning |
+| `WEB_PUBLIC_URL` | `https://para.mxlabs.cloud` in production |
+
+### Backup (optional, `para-backup` service)
+
+| Variable | Purpose |
+|---|---|
+| `BACKUP_CLOUD_ENABLED` | `true`/`false` |
+| `BACKUP_CLOUD_ENDPOINT`, `BACKUP_CLOUD_BUCKET`, `BACKUP_CLOUD_ACCESS_KEY`, `BACKUP_CLOUD_SECRET_KEY` | S3-compatible storage credentials |
+| `BACKUP_CLOUD_RETENTION_DAYS` | Default `30` |
+
+`PARA_DB_PATH` (SQLite file path) is a **legacy v4 variable** — it has no effect on the production PostgreSQL path and only matters for the code on `backup/sqlite-version`.
+
+---
+
+## 🚀 Deploying on Dokploy
+
+1. **Connect the repo:** In Dokploy, point the project at this repository, branch `main`, using `docker-compose.yml` as the compose file (Dokploy auto-detects the 6 services).
+2. **Set environment variables:** Configure the variables above in the Dokploy project's environment settings (they're injected into each service per the `environment:` blocks in `docker-compose.yml`).
+3. **Verify the external database:** Confirm the PostgreSQL 16 + pgvector host referenced by `PARA_DB_URL` is reachable from the Dokploy host and that the `paradb` database + pgvector extension exist. Run Alembic migrations (`alembic upgrade head`) if this is a fresh database.
+4. **Deploy:** Trigger a deploy in Dokploy (or push to `main` — Dokploy redeploys automatically on merge).
+5. **Domains:** Dokploy's built-in Traefik reads the `traefik.*` labels in `docker-compose.yml` and provisions Let's Encrypt certificates for:
+   - `para-app` → `para.mxlabs.cloud`
+   - `para-mcp` → `mc-para.mxlabs.cloud`
+
+### Local / manual docker-compose use
+
+```bash
+cp .env.example .env
+# fill in OLLAMA_API_KEY, PARA_DB_URL (point at a reachable Postgres+pgvector instance), etc.
+docker-compose up -d
+docker-compose ps
+```
+
+---
+
+## ✅ Verification
+
+```bash
+# Liveness / readiness (para-app)
+curl https://para.mxlabs.cloud/api/health/live
+curl https://para.mxlabs.cloud/api/health/ready
+
+# REST API smoke test
+curl https://para.mxlabs.cloud/api/stats
+
+# MCP HTTP SSE — confirm the endpoint is up
+curl -i https://mc-para.mxlabs.cloud/mcp/sse
+
+# MCP container healthcheck (internal)
+docker-compose exec para-mcp curl -f http://localhost:8100/health
+```
+
+`app/routes/health.py` reports PostgreSQL and Redis connectivity — check it if either dependency is misbehaving.
 
 ---
 
 ## 🛠️ Common Commands
 
-### Container Management
-
 ```bash
-# Start containers
-docker-compose up -d
-
-# Stop containers
-docker-compose down
-
-# View logs
+# View logs for a service
 docker-compose logs -f para-app
+docker-compose logs -f para-mcp
+docker-compose logs -f para-worker
+docker-compose logs -f para-scheduler
 
-# Rebuild image (after code changes)
+# Rebuild after code changes (all services share one Dockerfile/image)
 docker-compose up -d --build
 
-# Remove all data (be careful!)
-docker-compose down -v
-```
-
-### Database Operations
-
-```bash
-# Initialize database
-docker-compose exec para-app python3 scripts/init_db.py
-
-# Seed test data
-docker-compose exec para-app python3 scripts/seed.py
-
-# Connect to SQLite shell
-docker-compose exec para-app sqlite3 /var/lib/para-organizer/data/para.db
-
-# Backup database
-docker-compose exec para-app cp \
-  /var/lib/para-organizer/data/para.db \
-  /var/lib/para-organizer/data/para.db.backup
-```
-
-### API Testing
-
-```bash
-# Health check
-curl http://localhost:8731/api/stats
-
-# Create a note
-curl -X POST http://localhost:8731/api/notes \
-  -H "Content-Type: application/json" \
-  -d '{
-    "title": "ต่อทะเบียนรถ",
-    "content": "ทะเบียนหมดอายุ 15 สิงหาคม 2025",
-    "source": "manual"
-  }'
-
-# Search notes
-curl "http://localhost:8731/api/search?q=ทะเบียน"
-
-# Get PARA tree
-curl http://localhost:8731/api/para/tree
-
-# Export as JSON
-curl http://localhost:8731/api/export?format=json > notes.json
-```
-
-### Telegram Bot Testing
-
-```bash
-# Send test message to webhook
-curl -X POST http://localhost:8731/webhook/telegram \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": {
-      "text": "/note ทดสอบ note ใหม่",
-      "chat": {"id": 123456789}
-    }
-  }'
-```
-
----
-
-## 🔒 Production Deployment on Contabo
-
-### Step 1: SSH to Contabo Server
-
-```bash
-ssh root@your-server-ip
-cd /opt/para-organizer
-```
-
-### Step 2: Clone Repository
-
-```bash
-git clone https://github.com/lazymarcus005-maker/para-organizer.git
-cd para-organizer
-```
-
-### Step 3: Setup Environment
-
-```bash
-# Create .env from template
-cp .env.example .env
-
-# Edit with your production keys
-nano .env
-
-# Required settings:
-# PARA_SECRET_KEY=<random-secret-key> (generate: openssl rand -hex 32)
-# OLLAMA_API_KEY=<your-key>
-# TELEGRAM_BOT_TOKEN=<your-token>
-# WEB_PUBLIC_URL=https://para.mxlabs.cloud
-# TELEGRAM_WEBHOOK_URL=https://para.mxlabs.cloud/webhook/telegram
-```
-
-### Step 4: Prepare Directories & Permissions
-
-```bash
-# Create data directory on host
-mkdir -p /var/lib/para-organizer/data
-chmod 755 /var/lib/para-organizer/data
-
-# Optionally mount from different disk
-# mount /dev/vdX /var/lib/para-organizer/data
-```
-
-### Step 5: Start with Docker Compose
-
-```bash
-docker-compose up -d
-
-# Monitor startup
-docker-compose logs -f para-app
-
-# Wait for healthy status (30 seconds)
-docker-compose ps
-
-# Verify API
-curl http://localhost:8731/api/stats
-```
-
-### Step 6: Enable Nginx Reverse Proxy (Optional)
-
-```bash
-# Uncomment para-nginx in docker-compose.yml
-nano docker-compose.yml
-# Uncomment the "para-nginx" service block
-
-# Generate self-signed cert (for testing)
-mkdir -p certs
-openssl req -x509 -newkey rsa:4096 -nodes \
-  -out certs/cert.pem -keyout certs/key.pem -days 365
-
-# Or use Let's Encrypt (recommended for production)
-# with Certbot instead
-
-# Restart with Nginx
-docker-compose up -d --build
-```
-
-### Step 7: Setup SSL with Cloudflare (Recommended)
-
-Since you're using Cloudflare for DNS on mxlabs.cloud:
-
-```bash
-# In Cloudflare dashboard:
-# 1. Go to SSL/TLS > Origin Server
-# 2. Create a certificate (valid 15 years)
-# 3. Save cert.pem + key.pem to ./certs/
-
-# Update docker-compose to mount certs
-# volumes:
-#   - ./certs:/etc/nginx/certs:ro
-
-# Restart
-docker-compose restart para-nginx
-```
-
-### Step 8: Systemd Service (Auto-start on Reboot)
-
-Create `/etc/systemd/system/para-organizer.service`:
-
-```ini
-[Unit]
-Description=PARA Organizer Docker Compose
-Requires=docker.service
-After=docker.service
-
-[Service]
-Type=simple
-WorkingDirectory=/opt/para-organizer
-ExecStart=/usr/bin/docker-compose up
-ExecStop=/usr/bin/docker-compose down
-Restart=unless-stopped
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Enable and start:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable para-organizer
-sudo systemctl start para-organizer
-sudo systemctl status para-organizer
-```
-
----
-
-## 📊 Monitoring & Logging
-
-### View Logs
-
-```bash
-# Real-time app logs
-docker-compose logs -f para-app
-
-# Nginx logs (if enabled)
-docker-compose logs -f para-nginx
-
-# Last 100 lines
-docker-compose logs --tail 100
-
-# Specific time range
-docker-compose logs --since 1h --until 10m
-```
-
-### Health Check
-
-```bash
-# Check container status
-docker-compose ps
-
-# Container stats (CPU, memory)
-docker stats para-organizer-app
-
-# Detailed inspect
-docker inspect para-organizer-app
-```
-
-### Backup & Restore
-
-```bash
-# Backup database
-docker-compose exec para-app bash -c \
-  'sqlite3 /var/lib/para-organizer/data/para.db ".dump"' > backup.sql
-
-# Restore from backup
-cat backup.sql | docker-compose exec -T para-app \
-  sqlite3 /var/lib/para-organizer/data/para.db
-
-# Backup entire data directory
-docker-compose exec para-app tar czf - \
-  /var/lib/para-organizer/data | gzip > data-backup.tar.gz
-
-# Restore
-tar xzf data-backup.tar.gz -C /var/lib/para-organizer/
+# Restart a single service
+docker-compose restart para-app
+
+# Run Alembic migrations against the PostgreSQL database
+docker-compose exec para-app alembic upgrade head
 ```
 
 ---
 
 ## 🔧 Troubleshooting
 
-### Container won't start
+### Service won't start
 
 ```bash
-# Check logs
-docker-compose logs para-app
-
-# Common issues:
-# 1. Database locked: restart para-app
-docker-compose restart para-app
-
-# 2. Port already in use: change port in docker-compose.yml
-# ports:
-#   - "8732:8731"
-
-# 3. Env var missing: verify .env exists and is valid
-cat .env
+docker-compose logs <service-name>
 ```
 
-### LLM Classifier Failing
+Common causes: `PARA_DB_URL` unreachable (check the external Postgres host/firewall), missing `OLLAMA_API_KEY`, or a port conflict on 8731/8100.
+
+### LLM classifier failing
 
 ```bash
-# Check OLLAMA_API_KEY
 docker-compose exec para-app env | grep OLLAMA
-
-# Test LLM connection
 docker-compose exec para-app python3 -c "
-import httpx
-import os
+import httpx, os
 api_key = os.getenv('OLLAMA_API_KEY')
 result = httpx.post(
   'https://ollama.com/v1/chat/completions',
@@ -449,179 +219,59 @@ print(result)
 "
 ```
 
-### Telegram Webhook Issues
+### Database connectivity
 
 ```bash
-# Verify webhook URL is correct
+docker-compose exec para-app env | grep PARA_DB_URL
+docker-compose exec para-app python3 -c "
+import asyncio
+from app.database_v2 import async_session_factory
+from sqlalchemy import text
+async def check():
+    async with async_session_factory() as s:
+        print(await s.execute(text('SELECT 1')))
+asyncio.run(check())
+"
+```
+
+### MCP SSE not reachable
+
+- Confirm the `para-mcp` Traefik labels/host in `docker-compose.yml` match the DNS record for `mc-para.mxlabs.cloud`.
+- Check `docker-compose logs -f para-mcp` and the container healthcheck (`GET /health` on port 8100).
+
+### Telegram webhook issues
+
+```bash
 docker-compose exec para-app env | grep TELEGRAM
-
-# Test webhook manually
-curl -X POST http://localhost:8731/webhook/telegram \
-  -H "Content-Type: application/json" \
-  -d '{"message": {"text": "/help", "chat": {"id": 123}}}'
-
-# Check Telegram bot token
 curl https://api.telegram.org/bot<TOKEN>/getMe
-```
-
-### Disk Space Issues
-
-```bash
-# Check volume size
-docker inspect para-data
-
-# Check used space
-du -sh /var/lib/para-organizer/data
-
-# Cleanup Docker
-docker system prune -a --volumes
-```
-
----
-
-## 📈 Performance Tuning
-
-### Environment Variables for Production
-
-```bash
-# .env adjustments
-PARA_PORT=8731
-
-# LLM optimization (reduce timeouts if network is fast)
-LLM_TIMEOUT=30
-LLM_MAX_RETRIES=1
-
-# Scheduler optimization
-RECLASSIFY_INTERVAL_HOURS=12   # Less frequent
-AUTO_ARCHIVE_DAYS=60            # Archive older
-
-# Notification tuning
-NOTIFY_DEADLINE_DAYS=7          # Only 7 days before
-NOTIFY_STALE_DAYS=30           # Less frequent stale checks
-
-# Telegram
-TELEGRAM_BOT_TOKEN=<your-token>
-```
-
-### Docker Resource Limits
-
-Uncomment in `docker-compose.yml`:
-
-```yaml
-services:
-  para-app:
-    deploy:
-      resources:
-        limits:
-          cpus: '2'
-          memory: 1G
-        reservations:
-          cpus: '1'
-          memory: 512M
-```
-
-### SQLite Performance
-
-```bash
-# Enable WAL mode (already in app/database.py)
-# But you can manually verify:
-docker-compose exec para-app sqlite3 /var/lib/para-organizer/data/para.db "PRAGMA journal_mode;"
-# Should return: wal
-
-# Check indexes
-docker-compose exec para-app sqlite3 /var/lib/para-organizer/data/para.db ".indices"
 ```
 
 ---
 
 ## 🔐 Security Hardening
 
-### 1. Change Secret Keys
-
-```bash
-# Generate random secret
-openssl rand -hex 32
-# Output: a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6
-
-# Update .env
-PARA_SECRET_KEY=a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6
-```
-
-### 2. Restrict Telegram Users
-
-```bash
-# Only specific Telegram user IDs
-TELEGRAM_ALLOWED_USERS=123456789,987654321
-```
-
-### 3. Use HTTPS
-
-Use Cloudflare SSL + Nginx reverse proxy
-
-### 4. Database Backups
-
-```bash
-# Automatic daily backups via cron
-0 2 * * * cd /opt/para-organizer && \
-  docker-compose exec -T para-app bash -c \
-  'cp /var/lib/para-organizer/data/para.db /var/lib/para-organizer/data/para.db.$(date +%Y%m%d)'
-```
-
-### 5. Firewall Rules
-
-```bash
-# Allow only necessary ports
-sudo ufw allow 22/tcp      # SSH
-sudo ufw allow 80/tcp      # HTTP (for ACME)
-sudo ufw allow 443/tcp     # HTTPS
-sudo ufw enable
-```
+1. **Secret key:** `PARA_SECRET_KEY` — generate with `openssl rand -hex 32`, set via Dokploy environment settings (never commit to `.env` in git).
+2. **Restrict Telegram users:** set `TELEGRAM_ALLOWED_USERS` to a comma-separated allowlist.
+3. **TLS:** handled by Dokploy's Traefik + Let's Encrypt — no manual cert management needed.
+4. **Database credentials:** rotate the PostgreSQL password embedded in `PARA_DB_URL` periodically; it's shared across `para-app`, `para-mcp`, `para-worker`, `para-scheduler`, `para-backup`.
+5. **Rate limiting:** `para-app`'s Traefik router has a rate-limit middleware (`para-ratelimit`, average 100 / burst 200) configured in `docker-compose.yml`.
 
 ---
 
 ## 📦 Updating the Application
 
-```bash
-# 1. Backup database first
-docker-compose exec para-app cp \
-  /var/lib/para-organizer/data/para.db \
-  /var/lib/para-organizer/data/para.db.backup
-
-# 2. Pull latest code
-git pull origin main
-
-# 3. Rebuild and restart
-docker-compose up -d --build
-
-# 4. Run migrations (if any)
-docker-compose exec para-app python3 scripts/init_db.py
-
-# 5. Verify
-docker-compose logs -f para-app
-```
-
----
-
-## 🎯 Next Steps
-
-1. ✅ Deploy containers
-2. ✅ Test API endpoints
-3. ✅ Setup Telegram bot (if needed)
-4. ✅ Configure Hermes MCP server
-5. ✅ Setup cron jobs for Hermes integration
-6. 📊 Monitor performance & logs
-7. 🔄 Setup automated backups
+1. Merge a PR to `main` — Dokploy redeploys automatically.
+2. For schema changes, run `alembic upgrade head` against the PostgreSQL database (via `docker-compose exec para-app alembic upgrade head` or Dokploy's shell).
+3. Watch `docker-compose logs -f para-app para-mcp para-worker para-scheduler` during rollout.
+4. Re-run the [Verification](#-verification) checks above.
 
 ---
 
 ## 📞 Support
 
-- **Logs:** `docker-compose logs -f para-app`
-- **Database:** `/var/lib/para-organizer/data/para.db`
-- **Config:** `.env`
-- **API Docs:** http://localhost:8731/docs (FastAPI auto-generated)
+- **Logs:** `docker-compose logs -f <service>` (see service names above)
+- **Database:** external PostgreSQL 16 + pgvector at the host in `PARA_DB_URL`
+- **Config:** Dokploy environment settings (or `.env` for local use)
+- **API Docs:** `https://para.mxlabs.cloud/docs` (FastAPI auto-generated)
 - **Spec:** `spec.md` in repo
-
----
-
-**Happy deploying!** 🚀
+- **Legacy SQLite deployment notes:** see `backup/sqlite-version` branch (not applicable to production)
