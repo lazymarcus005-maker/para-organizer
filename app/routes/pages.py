@@ -1,5 +1,6 @@
 """Web UI pages (Jinja2 + HTMX + Tailwind CDN)."""
 
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, Query, Request
@@ -26,6 +27,11 @@ router = APIRouter(tags=["pages"])
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+# Cache-busting query param for /static assets so nginx's `expires 1h;
+# Cache-Control: immutable` and mobile browser caches pick up new CSS/JS
+# immediately after a deploy instead of serving stale assets for up to an hour.
+templates.env.globals["static_version"] = str(int(time.time()))
 
 KANBAN_CATEGORIES = ["projects", "areas", "resources", "archives"]
 

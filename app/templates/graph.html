@@ -4,7 +4,7 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.css" type="text/css" />
-<link rel="stylesheet" href="/static/graph.css">
+<link rel="stylesheet" href="/static/graph.css?v={{ static_version }}">
 {% endblock %}
 
 {% block content %}
@@ -57,5 +57,5 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.js"></script>
-<script src="/static/graph.js" defer></script>
+<script src="/static/graph.js?v={{ static_version }}" defer></script>
 {% endblock %}
