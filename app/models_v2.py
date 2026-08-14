@@ -276,17 +276,32 @@ class Event(Base):
 
 
 # ── Task ─────────────────────────────────────────────────────────────────────
+#
+# Task delegation table for SB-02 (Hermes ↔ PARA task bridge). Schema fields
+# mirror the legacy SQLite ``app/tasks.py`` writers so the same logical flow
+# works against PostgreSQL; the columns are kept in sync by alembic
+# 0004_tasks_phase4_columns.
 
 class Task(Base):
     __tablename__ = "tasks"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    # pending | dispatched | completed | failed
     status: Mapped[str] = mapped_column(
         String, nullable=False, default="pending", index=True
     )
+    # general | research | code | deploy | review | automation
+    task_type: Mapped[str] = mapped_column(
+        String, nullable=False, default="general"
+    )
+    result: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Opaque id of the agent that picked up the task (e.g. 'hermes-cron').
+    agent_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    # Correlates the local task with the remote job the dispatcher spawned.
+    hermes_job_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     note_id: Mapped[Optional[int]] = mapped_column(
-        Integer, ForeignKey("notes.id", ondelete="SET NULL"), nullable=True
+        Integer, ForeignKey("notes.id", ondelete="SET NULL"), nullable=True, index=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -298,6 +313,9 @@ class Task(Base):
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
     note: Mapped[Optional["Note"]] = relationship("Note", back_populates="tasks")
