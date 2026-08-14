@@ -33,12 +33,10 @@ from app.classifier import classify_note, extract_deadline_from_text
 from app.config import settings
 from app.database import init_db
 from app.database_v2 import async_session_factory
-from app.distill import DISTILL_SYSTEM_PROMPT
 from app.embed import embed_text
 from app.events import emit_event
 from app.models import PARA_CATEGORIES
 from app.models_v2 import History, Link, Note
-from app.utils import compute_next_deadline
 from app.vector_store import delete_note_embedding, semantic_search
 
 logger = logging.getLogger("para.mcp.http")
@@ -97,57 +95,26 @@ async def _fetch_note(session: AsyncSession, note_id: int) -> dict | None:
     return _note_to_dict(note) if note is not None else None
 
 
-# ── PostgreSQL-native replicas of SQLite-only helper modules ────────────────
+# ── PostgreSQL-native helpers ────────────────────────────────────────────────
 #
-# app.chat._hybrid_retrieve / app.distill / app.utils.spawn_recurring_instance
-# still operate on aiosqlite connections and are also used by the legacy
-# SQLite routers in app/routes/* (still mounted in app/main.py). Rather than
-# changing their signatures (which would break those routers), the tools
-# below replicate the minimal logic needed against PostgreSQL / SQLAlchemy.
+# `app.distill.distill_note` and `app.utils.spawn_recurring_instance` were
+# extended to auto-detect aiosqlite.Connection vs AsyncSession, so the MCP
+# tools below delegate to them instead of re-implementing the logic.
+# `app.chat._hybrid_retrieve` is still aiosqlite-only (out of scope here);
+# `_pg_hybrid_retrieve` below keeps its local re-implementation until the
+# helper is ported.
+
+from app.distill import distill_note
+from app.utils import spawn_recurring_instance
+
 
 async def _pg_distill_note(session: AsyncSession, note_id: int) -> str | None:
-    note = await session.get(Note, note_id)
-    if note is None:
-        logger.warning("Note %d not found for distillation", note_id)
-        return None
-    messages = [
-        {"role": "system", "content": DISTILL_SYSTEM_PROMPT},
-        {"role": "user", "content": f"ชื่อ: {note.title}\n\nเนื้อหา:\n{note.content}"},
-    ]
-    try:
-        summary = await classifier.call_ollama(settings.CHAT_MODEL, messages=messages, format=None, task="distill")
-        return summary.strip() if summary else None
-    except Exception as e:
-        logger.warning("Failed to distill note %d: %s", note_id, e)
-        return None
+    return await distill_note(session, note_id)
 
 
 async def _pg_spawn_recurring_instance(session: AsyncSession, note: Note) -> int | None:
-    """If `note` has a valid recurrence config, create the next instance."""
-    if not isinstance(note.recurrence, dict) or not note.recurrence:
-        return None
-    recurrence = note.recurrence
-    current_deadline = note.deadline.isoformat() if note.deadline else date.today().isoformat()
-    next_deadline = compute_next_deadline(current_deadline, recurrence)
-    if not next_deadline:
-        return None
-
-    new_note = Note(
-        title=note.title, content=note.content, para_category=note.para_category,
-        sub_category=note.sub_category, priority=note.priority,
-        deadline=date.fromisoformat(next_deadline), tags=note.tags or [],
-        source="recurring", recurrence=recurrence,
-        llm_model=note.llm_model, llm_confidence=note.llm_confidence or 0.0,
-        llm_reasoning=note.llm_reasoning,
-    )
-    session.add(new_note)
-    await session.flush()
-    session.add(History(
-        note_id=new_note.id, action="created", new_value="recurring",
-        reason=f"Recurring instance from #{note.id}",
-    ))
-    logger.info("Spawned recurring instance #%s from #%s, deadline %s", new_note.id, note.id, next_deadline)
-    return new_note.id
+    """Delegate to `app.utils.spawn_recurring_instance` which accepts AsyncSession."""
+    return await spawn_recurring_instance(session, _note_to_dict(note))
 
 
 async def _pg_hybrid_retrieve(session: AsyncSession, user_text: str) -> list[dict]:
