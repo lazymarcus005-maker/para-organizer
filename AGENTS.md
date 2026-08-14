@@ -12,7 +12,7 @@ Production is the `main` branch: PostgreSQL v5, deployed on Dokploy (self-hosted
 
 - **`app/main.py`** — FastAPI app entrypoint; wires up routes and startup (DB init, cache init)
 - **`app/database_v2.py`** / **`app/models_v2.py`** — **Production (v5, PostgreSQL).** Async SQLAlchemy engine/session (`async_session_factory`) and ORM models for PostgreSQL 16 + pgvector, reached via `PARA_DB_URL` (external host `169.58.65.88:5436/paradb`). Full-text search via `tsvector`, embeddings via `pgvector`. This is the current schema — treat changes as high-impact.
-- **`app/database.py`** / **`app/models.py`** — **Legacy (v4, SQLite).** aiosqlite engine (WAL mode, FTS5, sqlite-vec), local `para.db`. These files still physically exist in this tree but are **not** the production code path — don't edit or rely on them thinking they're current. The full v4 system is preserved only on the `backup/sqlite-version` branch.
+- **`app/database.py`** / **`app/models.py`** — **Legacy (v4, SQLite).** `database.py` keeps the minimal aiosqlite plumbing + the legacy `SCHEMA_SQL` block (used by the local-dev fallback in `init_db()`); `models.py` holds the Pydantic request/response schemas that the FastAPI routers still import. Both are intentionally kept in-tree so local-dev still works without a Postgres instance, but the complete v4 system is also preserved on the `backup/sqlite-version` branch for historical reference.
 - **`app/classifier.py`** — LLM-based classification, tagging, deadline extraction (Ollama Cloud, primary `deepseek-v4-flash`, fallback `gpt-oss:20b`; embeddings via `nomic-embed-text`)
 - **`app/chat.py`** — conversational / hybrid RAG chat mode
 - **`app/scheduler.py`** — Legacy in-process APScheduler (v4). Replaced by `app/scheduler_service.py` in production.
@@ -34,6 +34,10 @@ In the legacy v4 architecture, everything ran in one FastAPI process. In product
 
 - **Production code path**: `app/database_v2.py`, `app/models_v2.py`, `app/mcp/mcp_server_http.py`, plus everything else under `app/` except the two files below.
 - **Legacy (v4 SQLite) code path**: `app/database.py`, `app/models.py`, `app/scheduler.py`, `app/mcp/mcp_server.py` (stdio). These are kept for local-dev/reference but are not deployed. The complete SQLite v4 system is preserved on the `backup/sqlite-version` branch for historical reference only.
+
+### Code-path detection
+
+Business-logic modules (`app/autonomy`, `app/planner`, `app/graph`, `app/health`, `app/review`, `app/tasks`, `app/distill`, `app/usage`, etc.) detect the active backend at call time via a small helper (`_using_pg()` from `app.config` / `app.scheduler`) and dispatch to either the SQLAlchemy / PostgreSQL branch or the aiosqlite / SQLite branch. The public function signatures are identical for both backends so callers don't need to change. The SQLite branches are kept so local-dev (no `PARA_DB_URL` configured) still works without a Postgres instance.
 
 ## Key Commands
 
