@@ -1,10 +1,19 @@
-"""Shared helpers for converting DB rows to API-friendly dicts."""
+"""Shared helpers for converting DB rows to API-friendly dicts.
+
+`row_to_note` and `compute_next_deadline` are pure functions — no DB coupling.
+`spawn_recurring_instance` works against either a SQLite ``aiosqlite.Connection``
+or a SQLAlchemy ``AsyncSession`` (production / PostgreSQL). The caller picks the
+backend and passes the connection; this keeps the helper transport-agnostic
+and avoids spinning up a second connection inside a scheduled job.
+"""
 
 import json
 import logging
 from datetime import date, timedelta
 
 from app.config import settings
+from app.models_v2 import History as PgHistory
+from app.models_v2 import Note as PgNote
 
 logger = logging.getLogger("para.utils")
 
@@ -54,26 +63,74 @@ def compute_next_deadline(current_deadline: str, recurrence: dict) -> str | None
     return None
 
 
-async def spawn_recurring_instance(db, note: dict) -> int | None:
-    """If the note has a valid recurrence config, create the next instance.
-    Returns the new note id, or None if not recurring."""
-    recurrence_raw = note.get("recurrence")
+def _normalize_recurrence(recurrence_raw) -> dict | None:
     if not recurrence_raw:
         return None
     if isinstance(recurrence_raw, str):
         try:
-            recurrence = json.loads(recurrence_raw)
+            return json.loads(recurrence_raw)
         except (json.JSONDecodeError, TypeError):
             return None
-    elif isinstance(recurrence_raw, dict):
-        recurrence = recurrence_raw
-    else:
+    if isinstance(recurrence_raw, dict):
+        return recurrence_raw
+    return None
+
+
+async def spawn_recurring_instance(db, note: dict) -> int | None:
+    """If the note has a valid recurrence config, create the next instance.
+
+    Works with both backends:
+    - ``aiosqlite.Connection`` (SQLite, local-dev) — uses raw SQL via the
+      passed-in connection; relies on the caller for ``commit()``.
+    - SQLAlchemy ``AsyncSession`` (PostgreSQL, production) — adds the new
+      ``Note`` and ``History`` row, then ``flush()`` so the caller can
+      ``commit()`` in the same transaction it already manages.
+
+    Returns the new note id, or None if not recurring.
+    """
+    recurrence = _normalize_recurrence(note.get("recurrence"))
+    if recurrence is None:
         return None
 
-    next_deadline = compute_next_deadline(note.get("deadline") or date.today().isoformat(), recurrence)
+    next_deadline = compute_next_deadline(
+        note.get("deadline") or date.today().isoformat(), recurrence
+    )
     if not next_deadline:
         return None
 
+    # Detect backend by connection class. AsyncSession is the only async-session
+    # type we use in production; aiosqlite.Connection is the legacy adapter.
+    is_async_session = hasattr(db, "add") and hasattr(db, "flush") and not hasattr(db, "execute_fetchall")
+
+    if is_async_session:
+        new_note = PgNote(
+            title=note["title"],
+            content=note["content"],
+            para_category=note.get("para_category", "inbox"),
+            sub_category=note.get("sub_category"),
+            priority=note.get("priority", "medium"),
+            deadline=date.fromisoformat(next_deadline),
+            tags=note.get("tags") or [],
+            source="recurring",
+            recurrence=recurrence,
+            llm_model=note.get("llm_model"),
+            llm_confidence=float(note.get("llm_confidence") or 0.0),
+            llm_reasoning=note.get("llm_reasoning"),
+        )
+        db.add(new_note)
+        await db.flush()
+        new_id = new_note.id
+        db.add(PgHistory(
+            note_id=new_id,
+            action="created",
+            new_value="recurring",
+            reason=f"Recurring instance from #{note['id']}",
+        ))
+        await db.flush()
+        logger.info("Spawned recurring instance #%s from #%s, deadline %s", new_id, note["id"], next_deadline)
+        return new_id
+
+    # SQLite / aiosqlite path
     cursor = await db.execute(
         """INSERT INTO notes (title, content, para_category, sub_category, priority, deadline,
                               tags, source, recurrence, llm_model, llm_confidence, llm_reasoning)
