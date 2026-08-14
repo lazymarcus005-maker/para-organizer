@@ -1,11 +1,19 @@
-"""Database connection management — SQLite (aiosqlite) with SQLAlchemy async fallback.
+"""Database connection management.
 
-Phase 0 migration path:
-- Existing code uses ``get_connection()`` / ``get_db()`` (aiosqlite).
-- New code can use ``get_db_v2()`` (SQLAlchemy async session).
-- ``init_db()`` now runs Alembic migrations when a PostgreSQL URL is configured,
-  otherwise falls back to the original SQLite schema.
-- ``check_db_health()`` provides a unified health check for both backends.
+In production (PARA_DB_URL set + PostgreSQL), Alembic is the source of truth for
+schema (see alembic/versions/), so init_db() just runs ``alembic upgrade head``
+against the configured database URL.
+
+In legacy / local-dev mode (no PARA_DB_URL or non-postgres URL), init_db()
+falls back to the historical aiosqlite path that the v4 SQLite system used.
+The SQLite code path here is kept as-is so the local-dev experience is
+unchanged; the v4 system as a whole (legacy SQLite code, stdio MCP,
+sqlite-vec, etc.) is preserved on the ``backup/sqlite-version`` branch for
+historical reference.
+
+The :func:`get_connection` / :func:`get_db` helpers in this module are only
+used by the SQLite code path. PostgreSQL callers use ``app.database_v2``
+directly via ``async_session_factory`` / ``get_db()``.
 """
 
 from __future__ import annotations
@@ -16,11 +24,8 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 import aiosqlite
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.migrations import run_migrations
 
 logger = logging.getLogger("para.database")
 
@@ -32,6 +37,7 @@ except ImportError:
     sqlite_vec = None
     _SQLITE_VEC_AVAILABLE = False
     logger.warning("sqlite-vec not available — vector store will not be created (non-blocking)")
+
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS notes (
@@ -130,6 +136,64 @@ CREATE TABLE IF NOT EXISTS llm_usage (
 
 CREATE INDEX IF NOT EXISTS idx_llm_usage_ts ON llm_usage(ts);
 
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type TEXT NOT NULL,
+    note_id INTEGER,
+    payload TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    delivered_at DATETIME
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
+CREATE INDEX IF NOT EXISTS idx_events_status ON events(status);
+
+CREATE TABLE IF NOT EXISTS tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    note_id INTEGER,
+    prompt TEXT NOT NULL,
+    task_type TEXT NOT NULL DEFAULT 'general',
+    status TEXT NOT NULL DEFAULT 'pending',
+    result TEXT,
+    agent_id TEXT,
+    hermes_job_id TEXT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at DATETIME,
+    FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_note ON tasks(note_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_agent ON tasks(agent_id);
+
+CREATE TABLE IF NOT EXISTS items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    note_id INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    done INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_items_note ON items(note_id);
+
+CREATE TABLE IF NOT EXISTS feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    note_id INTEGER,
+    field TEXT NOT NULL,
+    llm_value TEXT,
+    user_value TEXT NOT NULL,
+    note_content_snippet TEXT,
+    timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_note ON feedback(note_id);
+CREATE INDEX IF NOT EXISTS idx_feedback_field ON feedback(field);
+CREATE INDEX IF NOT EXISTS idx_feedback_ts ON feedback(timestamp);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
     title, content, tags,
     content='notes',
@@ -162,7 +226,6 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_embeddings USING vec0(
 
 
 async def _load_vec_extension(db: aiosqlite.Connection) -> bool:
-    """Load the sqlite-vec extension onto this connection."""
     if not _SQLITE_VEC_AVAILABLE:
         return False
     try:
@@ -191,7 +254,6 @@ async def init_db() -> None:
 
 
 async def _init_pg() -> None:
-    """Run Alembic migrations against PostgreSQL."""
     import asyncio
 
     from alembic.config import Config
@@ -201,17 +263,13 @@ async def _init_pg() -> None:
         alembic_cfg = Config("alembic.ini")
         command.upgrade(alembic_cfg, "head")
 
-    # Alembic's env.py drives its own asyncio.run(); run it in a worker
-    # thread so it never collides with the app's running event loop.
     await asyncio.to_thread(_upgrade)
     logger.info("PostgreSQL schema up to date (Alembic upgrade head)")
 
 
 async def _init_sqlite() -> None:
-    """Create the SQLite database file (if needed) and run migrations."""
     db_path = settings.PARA_DB_PATH
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
-
     async with aiosqlite.connect(db_path) as db:
         await db.execute("PRAGMA journal_mode=WAL;")
         await db.execute("PRAGMA foreign_keys=ON;")
@@ -223,7 +281,6 @@ async def _init_sqlite() -> None:
                 await db.executescript(VEC_SCHEMA_SQL.format(dimensions=settings.EMBED_DIMENSIONS))
             except aiosqlite.Error:
                 logger.warning("Failed to create note_embeddings vector table", exc_info=True)
-        await run_migrations(db)
         await db.commit()
         logger.info(
             "init_db complete (sqlite-vec %s)",
@@ -233,7 +290,11 @@ async def _init_sqlite() -> None:
 
 @asynccontextmanager
 async def get_connection():
-    """Async context manager yielding a configured aiosqlite connection."""
+    """Async context manager yielding a configured aiosqlite connection.
+
+    Only used by the SQLite / legacy code path. PostgreSQL callers should use
+    ``app.database_v2.async_session_factory`` directly.
+    """
     db = await aiosqlite.connect(settings.PARA_DB_PATH)
     db.row_factory = aiosqlite.Row
     try:
@@ -246,34 +307,13 @@ async def get_connection():
 
 
 async def get_db():
-    """FastAPI dependency yielding an aiosqlite connection."""
+    """FastAPI dependency yielding an aiosqlite connection.
+
+    Only used by the SQLite / legacy code path. PostgreSQL callers should use
+    ``app.database_v2.get_db()``.
+    """
     async with get_connection() as db:
         yield db
-
-
-async def get_db_v2() -> AsyncGenerator[AsyncSession, None]:
-    """FastAPI dependency yielding a SQLAlchemy async session (PostgreSQL).
-
-    Only available when ``PARA_DB_URL`` is configured. Falls back to
-    ``get_db()`` (aiosqlite) when PostgreSQL is not configured.
-    """
-    if not settings.PARA_DB_URL or "postgresql" not in settings.PARA_DB_URL:
-        # Fallback: yield the aiosqlite connection wrapped in a minimal adapter
-        async with get_connection() as db:
-            yield db  # type: ignore[return-value]
-        return
-
-    from app.database_v2 import async_session_factory
-
-    async with async_session_factory() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await session.close()
 
 
 async def check_db_health() -> bool:
