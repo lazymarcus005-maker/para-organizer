@@ -272,45 +272,20 @@ async def handle_distill(payload: dict[str, Any]) -> None:
     from app.distill import distill_note
 
     async with async_session_factory() as session:
-        result = await session.execute(select(Note).where(Note.id == note_id))
-        note = result.scalar_one_or_none()
+        note = await session.get(Note, note_id)
         if note is None:
             logger.warning("Note %s not found for distillation", note_id)
             return
+        # distill_note() works against either aiosqlite or AsyncSession (auto-detected).
+        summary = await distill_note(session, note_id)
+        if summary:
+            await session.commit()
+            logger.info("Note %s distilled: %s", note_id, summary[:60])
 
-        # distill_note expects aiosqlite connection — we call the LLM part directly
-        from app.classifier import call_ollama
-
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "You are a note summarizer. Generate a concise 1-line summary "
-                    "of the following note in the same language as the note content. "
-                    "Keep it under 100 characters."
-                ),
-            },
-            {
-                "role": "user",
-                "content": f"ชื่อ: {note.title}\n\nเนื้อหา:\n{note.content}",
-            },
-        ]
-
-        try:
-            summary = await call_ollama(
-                settings.CHAT_MODEL,
-                messages=messages,
-                format=None,
-                task="distill",
-            )
-            if summary and summary.strip():
-                note.summary = summary.strip()
-                await session.commit()
-                logger.info("Note %s distilled: %s", note_id, note.summary[:60])
-            else:
-                logger.warning("Distillation returned empty for note %s", note_id)
-        except Exception as e:
-            logger.warning("Failed to distill note %s: %s", note_id, e)
+        summary = await distill_note(session, note_id)
+        if summary:
+            await session.commit()
+            logger.info("Note %s distilled: %s", note_id, summary[:60])
 
 
 @retry()
