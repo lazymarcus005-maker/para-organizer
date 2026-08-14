@@ -6,6 +6,8 @@ items, completion rate) so they can be unit-tested and embedded in the prompt;
 `generate_weekly_review` builds the prompt, calls the LLM (primary then fallback),
 and falls back to a deterministic markdown summary if every model call fails so a
 review is always produced.
+
+Works against either backend (PostgreSQL in production, SQLite in local-dev).
 """
 
 from __future__ import annotations
@@ -14,72 +16,181 @@ import logging
 from datetime import datetime, timedelta
 
 import httpx
+from sqlalchemy import and_, func, select
 
 from app.classifier import call_ollama
 from app.config import settings
-from app.database import get_connection
+from app.database_v2 import async_session_factory
+from app.models_v2 import Note as PgNote
 
 logger = logging.getLogger("para.review")
+
+
+def _using_pg() -> bool:
+    return bool(settings.PARA_DB_URL and "postgresql" in settings.PARA_DB_URL)
 
 
 async def gather_review_data(now: datetime | None = None) -> dict:
     """Collect the facts the review is built from: activity in the last 7 days,
     project/area status, stale (>= NOTIFY_STALE_DAYS with no update) items, and a
     completion rate. Uses its own connection so it's callable standalone."""
+    if _using_pg():
+        return await _gather_review_data_pg(now)
+    return await _gather_review_data_sqlite(now)
+
+
+async def _gather_review_data_pg(now: datetime | None) -> dict:
+    now = now or datetime.utcnow()
+    week_ago = now - timedelta(days=7)
+    stale_dt = now - timedelta(days=settings.NOTIFY_STALE_DAYS)
+
+    async with async_session_factory() as session:
+        total = (await session.execute(
+            select(func.count()).select_from(PgNote)
+        )).scalar_one()
+
+        category_rows = (await session.execute(
+            select(PgNote.para_category, func.count().label("c"))
+            .group_by(PgNote.para_category)
+        )).all()
+        status_rows = (await session.execute(
+            select(PgNote.status, func.count().label("c"))
+            .group_by(PgNote.status)
+        )).all()
+        active_projects = (await session.execute(
+            select(PgNote.id, PgNote.title, PgNote.status, PgNote.deadline, PgNote.updated_at)
+            .where(and_(PgNote.para_category == "projects", PgNote.status == "active"))
+            .order_by(PgNote.deadline.is_(None), PgNote.deadline.asc())
+        )).all()
+        stale_projects = (await session.execute(
+            select(PgNote.id, PgNote.title, PgNote.updated_at)
+            .where(and_(
+                PgNote.para_category == "projects",
+                PgNote.status == "active",
+                PgNote.updated_at < stale_dt,
+            ))
+            .order_by(PgNote.updated_at)
+        )).all()
+        neglected_areas = (await session.execute(
+            select(PgNote.id, PgNote.title, PgNote.updated_at)
+            .where(and_(
+                PgNote.para_category == "areas",
+                PgNote.status == "active",
+                PgNote.updated_at < stale_dt,
+            ))
+            .order_by(PgNote.updated_at)
+        )).all()
+        completed_this_week = (await session.execute(
+            select(PgNote.id, PgNote.title)
+            .where(and_(
+                PgNote.status.in_(("completed", "archived")),
+                PgNote.updated_at >= week_ago,
+            ))
+        )).all()
+        activity_rows = (await session.execute(
+            select(PgNote.para_category, func.count().label("c"))
+            .where(PgNote.updated_at >= week_ago)
+            .group_by(PgNote.para_category)
+            .order_by(func.count().desc())
+        )).all()
+        recent_resources = (await session.execute(
+            select(PgNote.id, PgNote.title)
+            .where(and_(
+                PgNote.para_category == "resources",
+                PgNote.created_at >= week_ago,
+            ))
+            .order_by(PgNote.created_at.desc())
+            .limit(5)
+        )).all()
+        new_count = (await session.execute(
+            select(func.count()).select_from(PgNote).where(PgNote.created_at >= week_ago)
+        )).scalar_one()
+
+    status_counts = {r.status: int(r.c) for r in status_rows}
+    active_total = status_counts.get("active", 0)
+    completed_total = status_counts.get("completed", 0) + status_counts.get("archived", 0)
+    denominator = active_total + completed_total
+    completion_rate = completed_total / denominator if denominator else 0.0
+    activity = {r.para_category: int(r.c) for r in activity_rows}
+    high_activity = activity_rows[0].para_category if activity_rows else None
+
+    return {
+        "total_notes": int(total),
+        "by_category": {r.para_category: int(r.c) for r in category_rows},
+        "status_counts": status_counts,
+        "active_projects": [
+            {"id": r.id, "title": r.title, "status": r.status,
+             "deadline": r.deadline.isoformat() if r.deadline else None,
+             "updated_at": r.updated_at.isoformat() if r.updated_at else None}
+            for r in active_projects
+        ],
+        "stale_projects": [
+            {"id": r.id, "title": r.title,
+             "updated_at": r.updated_at.isoformat() if r.updated_at else None}
+            for r in stale_projects
+        ],
+        "neglected_areas": [
+            {"id": r.id, "title": r.title,
+             "updated_at": r.updated_at.isoformat() if r.updated_at else None}
+            for r in neglected_areas
+        ],
+        "completed_this_week": [{"id": r.id, "title": r.title} for r in completed_this_week],
+        "activity_by_category": activity,
+        "high_activity_category": high_activity,
+        "recent_resources": [{"id": r.id, "title": r.title} for r in recent_resources],
+        "new_notes_count": int(new_count),
+        "completion_rate": completion_rate,
+        "stale_days": settings.NOTIFY_STALE_DAYS,
+    }
+
+
+async def _gather_review_data_sqlite(now: datetime | None) -> dict:
+    from app.database import get_connection
     now = now or datetime.now()
     week_ago = (now - timedelta(days=7)).isoformat(sep=" ")
     stale_cutoff = (now - timedelta(days=settings.NOTIFY_STALE_DAYS)).isoformat(sep=" ")
 
     async with get_connection() as db:
         total = (await (await db.execute("SELECT COUNT(*) c FROM notes")).fetchone())["c"]
-
         category_rows = await (await db.execute(
             "SELECT para_category, COUNT(*) c FROM notes GROUP BY para_category"
         )).fetchall()
-
         status_rows = await (await db.execute(
             "SELECT status, COUNT(*) c FROM notes GROUP BY status"
         )).fetchall()
-
         active_projects = await (await db.execute(
             """SELECT id, title, status, deadline, updated_at FROM notes
                WHERE para_category='projects' AND status='active'
                ORDER BY deadline IS NULL, deadline"""
         )).fetchall()
-
         stale_projects = await (await db.execute(
             """SELECT id, title, updated_at FROM notes
                WHERE para_category='projects' AND status='active' AND updated_at < ?
                ORDER BY updated_at""",
             (stale_cutoff,),
         )).fetchall()
-
         neglected_areas = await (await db.execute(
             """SELECT id, title, updated_at FROM notes
                WHERE para_category='areas' AND status='active' AND updated_at < ?
                ORDER BY updated_at""",
             (stale_cutoff,),
         )).fetchall()
-
         completed_this_week = await (await db.execute(
             """SELECT id, title FROM notes
                WHERE status IN ('completed', 'archived') AND updated_at >= ?""",
             (week_ago,),
         )).fetchall()
-
         activity_rows = await (await db.execute(
             """SELECT para_category, COUNT(*) c FROM notes
                WHERE updated_at >= ? GROUP BY para_category ORDER BY c DESC""",
             (week_ago,),
         )).fetchall()
-
         recent_resources = await (await db.execute(
             """SELECT id, title FROM notes
                WHERE para_category='resources' AND created_at >= ?
                ORDER BY created_at DESC LIMIT 5""",
             (week_ago,),
         )).fetchall()
-
         new_count = (await (await db.execute(
             "SELECT COUNT(*) c FROM notes WHERE created_at >= ?", (week_ago,)
         )).fetchone())["c"]
@@ -89,7 +200,6 @@ async def gather_review_data(now: datetime | None = None) -> dict:
     completed_total = status_counts.get("completed", 0) + status_counts.get("archived", 0)
     denominator = active_total + completed_total
     completion_rate = completed_total / denominator if denominator else 0.0
-
     activity = {row["para_category"]: row["c"] for row in activity_rows}
     high_activity = activity_rows[0]["para_category"] if activity_rows else None
 
